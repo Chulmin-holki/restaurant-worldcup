@@ -4,7 +4,7 @@ const app = document.querySelector("#app");
 const toastElement = document.querySelector("#toast");
 const confettiElement = document.querySelector("#confetti");
 const config = window.APP_CONFIG || {};
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 
 const state = {
   view: "home",
@@ -243,7 +243,7 @@ function renderManual() {
         <p>사진에서 읽은 결과를 확인해 주세요. 잘못 인식된 부분만 고치면 됩니다.</p>
       </div>
 
-      <div class="notice-card"><strong>자동 인식 결과</strong><br />캡처 상태에 따라 글자가 다르게 읽힐 수 있어요. 특히 음식점 이름과 위치를 확인해 주세요.</div>
+      <div class="notice-card"><strong>사진을 읽어오는 과정이 정확하지 않을 수 있습니다.</strong><br />각 음식점의 첫 캡처를 직접 열어 이름·장소·별점과 비교해 주세요.</div>
 
       <details class="bulk-panel" hidden>
         <summary>여러 음식점을 한 번에 붙여넣기</summary>
@@ -266,12 +266,16 @@ function renderManual() {
 }
 
 function editorTemplate(item, index) {
+  const sourcePreview = Number.isInteger(item.captureIndex) ? state.captureRows[item.captureIndex]?.preview : "";
   return `
     <article class="restaurant-editor" data-index="${index}">
       <div class="editor-number">RESTAURANT ${String(index + 1).padStart(2, "0")}</div>
       ${state.manualRows.length > 2 ? `<button class="remove-editor" type="button" aria-label="${index + 1}번 음식점 삭제">×</button>` : ""}
       <div class="editor-grid">
-        ${item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
+        ${sourcePreview ? `<button class="source-preview-button" type="button" data-source-index="${item.captureIndex}">
+          <img class="editor-image source-preview-image" src="${escapeAttribute(sourcePreview)}" alt="${escapeAttribute(item.name || "음식점")} 기본 정보 원본 캡처" />
+          <span>첫 캡처 크게 보기 ↗</span>
+        </button>` : item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
         ${item.uncertain?.length ? `<div class="uncertain-note">확인 필요: ${item.uncertain.map(escapeHtml).join(", ")}</div>` : ""}
         <input class="manual-input" data-field="name" placeholder="음식점 이름 *" value="${escapeAttribute(item.name)}" />
         <input class="manual-input" data-field="location" placeholder="위치 *" value="${escapeAttribute(item.location)}" />
@@ -299,6 +303,11 @@ function bindManualEditors() {
     });
   });
 
+  document.querySelectorAll(".source-preview-button").forEach((button) => button.addEventListener("click", () => {
+    const row = state.captureRows[Number(button.dataset.sourceIndex)];
+    if (row?.preview) openSourcePreview(row.preview);
+  }));
+
   document.querySelector("#add-row").addEventListener("click", () => {
     state.manualRows.push(blankRestaurant());
     renderManual();
@@ -321,6 +330,22 @@ function bindManualEditors() {
     state.view = "home";
     render();
   });
+}
+
+function openSourcePreview(source) {
+  const modal = document.createElement("div");
+  modal.className = "source-preview-modal";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "기본 정보 원본 캡처");
+  modal.innerHTML = `<div class="source-preview-panel"><button class="source-preview-close" type="button" aria-label="닫기">×</button><img src="${escapeAttribute(source)}" alt="업로드한 기본 정보 원본 캡처" /><p>원본 캡처를 보며 입력 내용을 확인해 주세요.</p></div>`;
+  const close = () => { modal.remove(); document.removeEventListener("keydown", onKeydown); };
+  const onKeydown = (event) => { if (event.key === "Escape") close(); };
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+  modal.querySelector(".source-preview-close").addEventListener("click", close);
+  document.addEventListener("keydown", onKeydown);
+  document.body.append(modal);
+  modal.querySelector(".source-preview-close").focus();
 }
 
 function completeManualInput() {

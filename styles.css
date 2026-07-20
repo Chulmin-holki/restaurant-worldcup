@@ -318,6 +318,14 @@ a {
 .extracted-link { min-height:18px; margin-top:6px; color:var(--success); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .add-capture { width:100%; margin-top:10px; }
 .editor-image { grid-column:1/-1; width:100%; height:150px; object-fit:cover; border-radius:13px; }
+.source-preview-button { grid-column:1/-1; width:100%; padding:0; border-radius:13px; overflow:hidden; background:#171717; color:white; cursor:pointer; text-align:left; }
+.source-preview-button .editor-image { display:block; height:165px; border-radius:0; object-position:top; }
+.source-preview-button span { display:block; padding:9px 12px; font-size:11px; font-weight:800; }
+.source-preview-modal { position:fixed; z-index:300; inset:0; padding:20px; background:rgba(15,15,15,.82); display:grid; place-items:center; backdrop-filter:blur(7px); }
+.source-preview-panel { position:relative; width:min(100%,520px); max-height:92dvh; padding:42px 10px 12px; border-radius:20px; background:white; box-shadow:0 26px 80px rgba(0,0,0,.34); }
+.source-preview-panel img { display:block; width:100%; max-height:76dvh; object-fit:contain; border-radius:12px; background:#f3f1ee; }
+.source-preview-panel p { margin:10px 4px 0; color:var(--muted); text-align:center; font-size:11px; }
+.source-preview-close { position:absolute; top:8px; right:9px; width:32px; height:32px; border-radius:50%; background:#efedea; color:#514d49; cursor:pointer; font-size:20px; }
 .uncertain-note { grid-column:1/-1; padding:9px 11px; border-radius:10px; background:#fff6e7; color:var(--warning); font-size:12px; font-weight:750; }
 
 .privacy-note {
