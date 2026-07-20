@@ -11,6 +11,7 @@ const state = {
   sourceUrl: "",
   restaurants: [],
   manualRows: [],
+  captureRows: [blankCapture(), blankCapture()],
   roundNumber: 0,
   roundEntrants: [],
   matches: [],
@@ -80,7 +81,7 @@ function renderHome() {
       <div class="hero">
         <p class="eyebrow">오늘의 한 곳을 고르는 가장 재밌는 방법</p>
         <h1>고민은 짧게,<br />선택은 월드컵으로.</h1>
-        <p class="hero-copy">주제와 캐치테이블 ‘함께 고르기’ 링크를 넣으면 후보 음식점이 토너먼트로 펼쳐져요.</p>
+        <p class="hero-copy">음식점 상세 화면 캡처와 캐치테이블 링크를 넣으면 정보를 읽어 토너먼트로 펼쳐줘요.</p>
       </div>
 
       <form id="start-form" class="form-stack" novalidate>
@@ -94,17 +95,15 @@ function renderHome() {
           </span>
         </label>
 
-        <label>
-          <span class="field-label">캐치테이블 ‘함께 고르기’ 링크</span>
-          <span class="input-shell">
-            <input id="url-input" name="url" type="text" inputmode="url" autocomplete="url" placeholder="함께 고르기 링크를 붙여넣어 주세요" value="${escapeAttribute(state.sourceUrl)}" />
-          </span>
-          <span class="field-hint">링크 읽기가 제한되면 음식점을 직접 확인·보완할 수 있는 화면으로 이어져요.</span>
-        </label>
+        <div>
+          <span class="field-label">음식점 캡처와 링크</span>
+          <span class="field-hint">캐치테이블 상세 화면에서 음식점 이름·별점·지역이 보이게 캡처해 주세요.</span>
+          <div id="capture-inputs" class="capture-inputs">${state.captureRows.map(captureInputTemplate).join("")}</div>
+          <button id="add-capture" class="ghost-button add-capture" type="button">＋ 음식점 추가</button>
+        </div>
 
         <div class="home-actions">
           <button class="primary-button" type="submit">입력 완료 <span aria-hidden="true">→</span></button>
-          <button id="sample-button" class="link-button" type="button">샘플로 먼저 체험하기</button>
         </div>
       </form>
 
@@ -112,48 +111,71 @@ function renderHome() {
     </section>`);
 
   document.querySelector("#start-form").addEventListener("submit", handleStartSubmit);
-  document.querySelector("#sample-button").addEventListener("click", () => {
-    state.theme = "기념일";
-    state.sourceUrl = "https://app.catchtable.co.kr";
-    state.restaurants = sampleRestaurants.map((item) => ({ ...item }));
-    state.view = "review";
-    render();
-  });
+  bindCaptureInputs();
+}
+
+function captureInputTemplate(row, index) {
+  return `<article class="capture-input-card" data-index="${index}">
+    <div class="capture-card-head"><strong>RESTAURANT ${String(index + 1).padStart(2, "0")}</strong>${state.captureRows.length > 2 ? `<button type="button" class="remove-capture" aria-label="삭제">×</button>` : ""}</div>
+    <label class="capture-drop ${row.preview ? "has-image" : ""}">
+      ${row.preview ? `<img src="${escapeAttribute(row.preview)}" alt="${index + 1}번 캡처 미리보기" />` : `<span>＋ 화면 캡처 선택</span>`}
+      <input class="capture-file" type="file" accept="image/*" />
+    </label>
+    <input class="capture-url" type="url" inputmode="url" placeholder="이 음식점의 캐치테이블 링크" value="${escapeAttribute(row.url)}" />
+  </article>`;
+}
+
+function bindCaptureInputs() {
+  document.querySelector("#theme-input").addEventListener("input", (event) => { state.theme = event.target.value; });
+  document.querySelector("#add-capture").addEventListener("click", () => { state.captureRows.push(blankCapture()); renderHome(); });
+  document.querySelectorAll(".remove-capture").forEach((button) => button.addEventListener("click", () => {
+    state.captureRows.splice(Number(button.closest(".capture-input-card").dataset.index), 1); renderHome();
+  }));
+  document.querySelectorAll(".capture-url").forEach((input) => input.addEventListener("input", () => {
+    state.captureRows[Number(input.closest(".capture-input-card").dataset.index)].url = input.value;
+  }));
+  document.querySelectorAll(".capture-file").forEach((input) => input.addEventListener("change", async () => {
+    const file = input.files?.[0]; if (!file) return;
+    const index = Number(input.closest(".capture-input-card").dataset.index);
+    state.captureRows[index].file = file;
+    state.captureRows[index].preview = await fileToDataUrl(file);
+    renderHome();
+  }));
 }
 
 async function handleStartSubmit(event) {
   event.preventDefault();
   const theme = document.querySelector("#theme-input").value.trim();
-  const sourceInput = document.querySelector("#url-input").value.trim();
-  const sourceUrl = extractSharedUrl(sourceInput);
 
   if (!theme) {
     showToast("월드컵 주제를 먼저 입력해 주세요.");
     document.querySelector("#theme-input").focus();
     return;
   }
-  if (!sourceUrl) {
-    showToast("공유 링크를 붙여넣어 주세요.");
-    document.querySelector("#url-input").focus();
+  const validRows = state.captureRows.filter((row) => row.file && safeHttpUrl(row.url));
+  if (validRows.length < 2) {
+    showToast("캡처와 링크가 모두 있는 음식점을 두 곳 이상 넣어 주세요.");
     return;
   }
 
   state.theme = theme;
-  state.sourceUrl = sourceUrl;
+  state.sourceUrl = "";
   writeDraft();
   state.view = "loading";
   render();
 
-  const imported = await importRestaurants(sourceUrl);
-  if (imported.length >= 2) {
-    state.restaurants = imported;
-    state.view = "review";
-    render();
-    showToast(`${imported.length}곳을 불러왔어요.`);
-  } else {
-    state.manualRows = [blankRestaurant(), blankRestaurant(), blankRestaurant(), blankRestaurant()];
+  try {
+    state.restaurants = [];
+    for (let index = 0; index < validRows.length; index += 1) {
+      showOcrProgress(index + 1, validRows.length);
+      state.restaurants.push(await recognizeRestaurant(validRows[index], index));
+    }
+    state.manualRows = state.restaurants.map((item) => ({ ...item }));
     state.view = "manual";
     render();
+  } catch {
+    showToast("글자 인식에 실패했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.");
+    state.view = "home"; render();
   }
 }
 
@@ -164,8 +186,8 @@ function renderLoading() {
       <div class="loading-center">
         <div>
           <div class="loader" aria-hidden="true">⌁</div>
-          <h1>후보 음식점을 확인하고 있어요</h1>
-          <p>캐치테이블 링크에서 이름과 위치를<br />차곡차곡 가져오는 중입니다.</p>
+          <h1 id="ocr-progress">캡처를 읽고 있어요</h1>
+          <p>음식점 이름과 위치, 별점과 리뷰를<br />사진 속 글자에서 찾는 중입니다.</p>
         </div>
       </div>
     </section>`);
@@ -181,14 +203,12 @@ function renderManual() {
       ${topbar("CHECK")}
       <div class="manual-heading">
         <h1>후보를 한 번만<br />확인해 주세요.</h1>
-        <p>캐치테이블이 외부 페이지의 자동 읽기를 제한했어요. 이름과 위치만 입력해도 진행할 수 있고, 나머지는 선택 사항이에요.</p>
+        <p>사진에서 읽은 결과를 확인해 주세요. 잘못 인식된 부분만 고치면 됩니다.</p>
       </div>
 
-      <div class="notice-card">
-        <strong>왜 이런 화면이 나오나요?</strong><br />GitHub Pages는 보안을 위해 다른 서비스의 내용을 마음대로 읽을 수 없어요. 입력한 내용은 이 기기에만 머뭅니다.
-      </div>
+      <div class="notice-card"><strong>자동 인식 결과</strong><br />캡처 상태에 따라 글자가 다르게 읽힐 수 있어요. 특히 음식점 이름과 위치를 확인해 주세요.</div>
 
-      <details class="bulk-panel">
+      <details class="bulk-panel" hidden>
         <summary>여러 음식점을 한 번에 붙여넣기</summary>
         <textarea id="bulk-input" class="bulk-textarea" placeholder="한 줄에 한 곳씩 입력하세요.\n예: 레스토랑 이름 | 한남 | 4.8 | 120 | 간단한 설명 | 링크"></textarea>
         <button id="bulk-apply" class="ghost-button" type="button">붙여넣은 목록 적용</button>
@@ -213,12 +233,13 @@ function editorTemplate(item, index) {
       <div class="editor-number">RESTAURANT ${String(index + 1).padStart(2, "0")}</div>
       ${state.manualRows.length > 2 ? `<button class="remove-editor" type="button" aria-label="${index + 1}번 음식점 삭제">×</button>` : ""}
       <div class="editor-grid">
+        ${item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
         <input class="manual-input" data-field="name" placeholder="음식점 이름 *" value="${escapeAttribute(item.name)}" />
         <input class="manual-input" data-field="location" placeholder="위치 *" value="${escapeAttribute(item.location)}" />
         <input class="manual-input" data-field="rating" inputmode="decimal" placeholder="별점 (예: 4.7)" value="${escapeAttribute(item.rating || "")}" />
         <input class="manual-input" data-field="reviewCount" inputmode="numeric" placeholder="리뷰 수" value="${escapeAttribute(item.reviewCount || "")}" />
         <input class="manual-input wide" data-field="summary" placeholder="간단한 요약" value="${escapeAttribute(item.summary)}" />
-        <input class="manual-input wide" data-field="url" inputmode="url" placeholder="개별 캐치테이블 링크 (선택)" value="${escapeAttribute(item.url)}" />
+        <input class="manual-input wide" data-field="url" inputmode="url" placeholder="캐치테이블 링크 *" value="${escapeAttribute(item.url)}" />
       </div>
     </article>`;
 }
@@ -246,7 +267,7 @@ function bindManualEditors() {
     window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   });
 
-  document.querySelector("#bulk-apply").addEventListener("click", () => {
+  document.querySelector("#bulk-apply")?.addEventListener("click", () => {
     const parsed = parseBulkRestaurants(document.querySelector("#bulk-input").value);
     if (parsed.length < 2) {
       showToast("두 곳 이상을 한 줄에 한 곳씩 붙여넣어 주세요.");
@@ -294,7 +315,7 @@ function renderReview() {
                 <div class="restaurant-index">${String(index + 1).padStart(2, "0")}</div>
                 <div>
                   <h2>${escapeHtml(item.name)}</h2>
-                  <p>${escapeHtml(item.location || "위치 정보 없음")}</p>
+                  <p>${escapeHtml(item.location || "위치 정보 없음")} · ★ ${item.rating || "—"} · 리뷰 ${item.reviewCount || "—"}</p>
                 </div>
               </article>`
           )
@@ -488,6 +509,7 @@ function choiceCard(item, position, number) {
   const reviews = item.reviewCount ? `리뷰 ${Number(item.reviewCount).toLocaleString("ko-KR")}` : "리뷰 정보 없음";
   return `
     <article class="choice-card ${position}-card" data-position="${position}">
+      ${item.image ? `<div class="choice-photo" style="background-image:url('${escapeAttribute(item.image)}')"></div>` : ""}
       <span class="choice-number">NO.${String(number).padStart(2, "0")}</span>
       <div>
         <div class="choice-direction">${position === "top" ? "←" : "→"} ${direction}</div>
@@ -632,6 +654,7 @@ function renderResult() {
       </div>
 
       <article class="winner-card">
+        ${winner.image ? `<img class="winner-image" src="${escapeAttribute(winner.image)}" alt="${escapeAttribute(winner.name)} 대표 이미지" />` : ""}
         <div class="winner-location">${escapeHtml(winner.location || "위치 정보 없음")}</div>
         <h2>${escapeHtml(winner.name)}</h2>
         <div class="restaurant-meta">
@@ -943,8 +966,72 @@ function parseBulkRestaurants(value) {
     });
 }
 
-function restaurant(id, name, location, rating, reviewCount, summary, url) {
-  return { id, name, location, rating, reviewCount, summary, url };
+function restaurant(id, name, location, rating, reviewCount, summary, url, image = "") {
+  return { id, name, location, rating, reviewCount, summary, url, image };
+}
+
+function blankCapture() { return { file: null, preview: "", url: "" }; }
+
+function showOcrProgress(current, total) {
+  const element = document.querySelector("#ocr-progress");
+  if (element) element.textContent = `${current}/${total}번째 캡처를 읽고 있어요`;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file);
+  });
+}
+
+async function recognizeRestaurant(row, index) {
+  if (!window.Tesseract) throw new Error("OCR unavailable");
+  const result = await window.Tesseract.recognize(row.file, "kor+eng", { logger: () => {} });
+  const text = result.data.text.replace(/[|]/g, " ").replace(/\s+/g, " ").trim();
+  const ratingMatch = text.match(/(?:★|별점)?\s*([3-5][.,]\d)\s*(?:[·ㆍ|]?\s*)?(?:리뷰)?\s*([\d,]+)\s*(?:개)?/);
+  const location = inferLocation(text);
+  const summary = inferScreenshotSummary(text);
+  return restaurant(
+    `capture-${Date.now()}-${index}`,
+    inferScreenshotName(text, location),
+    location,
+    ratingMatch ? Number(ratingMatch[1].replace(",", ".")) : inferRating(text),
+    ratingMatch ? Number(ratingMatch[2].replaceAll(",", "")) : inferReviewCount(text),
+    summary,
+    safeHttpUrl(row.url),
+    await cropRepresentativeImage(row.file)
+  );
+}
+
+function inferScreenshotName(text, location) {
+  const beforeRating = text.split(/(?:★\s*)?[3-5][.,]\d/)[0];
+  const tokens = beforeRating.split(/\s+/).filter((token) => token.length >= 2 && token.length <= 18);
+  const ignored = /^(함께|고르기|전화|꽃|주문|서비스|신규입점|흑백요리사|시즌|위치|예약)$/;
+  const candidates = tokens.filter((token) => !ignored.test(token) && token !== location && !/\d/.test(token));
+  return candidates.at(-1)?.replace(/[^가-힣A-Za-z0-9&'·\- ]/g, "") || "음식점 이름 확인 필요";
+}
+
+function inferScreenshotSummary(text) {
+  const known = [
+    /편안한 분위기에서 즐기는[^。\n]{5,90}/,
+    /흑백요리사[^。\n]{5,90}/,
+  ];
+  for (const pattern of known) { const match = text.match(pattern); if (match) return cleanText(match[0]).slice(0, 150); }
+  const category = ["가이세키오마카세", "다이닝바", "오마카세", "프렌치", "이탈리안", "한식", "일식"].find((item) => text.replace(/\s/g, "").includes(item));
+  return category || "캐치테이블 상세 화면에서 확인한 음식점";
+}
+
+function cropRepresentativeImage(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      const sourceHeight = Math.max(1, Math.floor(image.naturalHeight * 0.28));
+      canvas.width = 640; canvas.height = 360;
+      canvas.getContext("2d").drawImage(image, 0, Math.floor(image.naturalHeight * 0.05), image.naturalWidth, sourceHeight, 0, 0, 640, 360);
+      resolve(canvas.toDataURL("image/jpeg", 0.68));
+    };
+    image.onerror = reject; image.src = URL.createObjectURL(file);
+  });
 }
 
 function blankRestaurant() {
@@ -962,7 +1049,8 @@ function normalizeRestaurant(item) {
     clamp(numberValue(item.rating), 0, 5),
     Math.max(0, integerValue(item.reviewCount)),
     cleanText(item.summary).slice(0, 240),
-    safeHttpUrl(item.url) || state.sourceUrl
+    safeHttpUrl(item.url) || state.sourceUrl,
+    typeof item.image === "string" ? item.image : ""
   );
 }
 
