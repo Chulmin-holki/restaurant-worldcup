@@ -256,7 +256,8 @@ function renderManual() {
       <button id="add-row" class="ghost-button" type="button">＋ 음식점 추가</button>
 
       <div class="manual-bottom">
-        <button id="manual-complete" class="primary-button" type="button">후보 확인 완료 <span aria-hidden="true">→</span></button>
+        <button id="back-to-captures" class="secondary-button" type="button">← 돌아가기</button>
+        <button id="manual-complete" class="primary-button" type="button">입력 완료 <span aria-hidden="true">→</span></button>
       </div>
     </section>`);
 
@@ -277,10 +278,6 @@ function editorTemplate(item, index) {
         <input class="manual-input wide" data-field="summary" placeholder="간단한 요약" value="${escapeAttribute(item.summary)}" />
         <input class="manual-input wide" data-field="url" inputmode="url" placeholder="캐치테이블 링크 *" value="${escapeAttribute(item.url)}" />
       </div>
-      ${Number.isInteger(item.captureIndex) ? `<div class="editor-tools">
-        <button class="reocr-button ghost-button" type="button">↻ 다시 인식</button>
-        <label>사진 위치 <input class="image-position" type="range" min="0" max="35" value="5" /></label>
-      </div>` : ""}
     </article>`;
 }
 
@@ -301,23 +298,6 @@ function bindManualEditors() {
     });
   });
 
-  document.querySelectorAll(".reocr-button").forEach((button) => button.addEventListener("click", async () => {
-    const index = Number(button.closest(".restaurant-editor").dataset.index);
-    const captureIndex = state.manualRows[index].captureIndex;
-    button.disabled = true; button.textContent = "인식 중…";
-    try {
-      const refreshed = await recognizeRestaurant(state.captureRows[captureIndex], captureIndex);
-      state.manualRows[index] = refreshed; renderManual(); showToast("이 음식점만 다시 읽었어요.");
-    } catch { button.disabled = false; button.textContent = "↻ 다시 인식"; showToast("다시 인식하지 못했어요."); }
-  }));
-
-  document.querySelectorAll(".image-position").forEach((input) => input.addEventListener("change", async () => {
-    const index = Number(input.closest(".restaurant-editor").dataset.index);
-    const captureIndex = state.manualRows[index].captureIndex;
-    state.manualRows[index].image = await cropRepresentativeImage(state.captureRows[captureIndex].file, Number(input.value) / 100);
-    renderManual();
-  }));
-
   document.querySelector("#add-row").addEventListener("click", () => {
     state.manualRows.push(blankRestaurant());
     renderManual();
@@ -336,6 +316,10 @@ function bindManualEditors() {
   });
 
   document.querySelector("#manual-complete").addEventListener("click", completeManualInput);
+  document.querySelector("#back-to-captures").addEventListener("click", () => {
+    state.view = "home";
+    render();
+  });
 }
 
 function completeManualInput() {
@@ -379,68 +363,15 @@ function renderReview() {
           .join("")}
       </div>
 
-      <div id="swipe-up-zone" class="swipe-up-zone" role="button" tabindex="0" aria-label="위로 스와이프하여 토너먼트 시작">
-        <div class="swipe-up-inner">
-          <span class="up-arrow" aria-hidden="true">↑</span>
-          진행하려면 위로 스와이프
-          <br /><button id="start-fallback" class="start-fallback" type="button">또는 여기를 눌러 시작</button>
-        </div>
+      <div class="candidate-confirm-area">
+        <p>이 후보들로 월드컵을 시작할까요?</p>
+        <button id="confirm-candidates" class="primary-button" type="button">후보 확인 완료 <span aria-hidden="true">→</span></button>
       </div>
       <button id="share-worldcup" class="share-fab" type="button" aria-label="이 월드컵 공유">↗</button>
     </section>`);
 
-  bindReviewGestures();
+  document.querySelector("#confirm-candidates").addEventListener("click", startTournament);
   document.querySelector("#share-worldcup").addEventListener("click", shareCurrentWorldcup);
-}
-
-function bindReviewGestures() {
-  const zone = document.querySelector("#swipe-up-zone");
-  let startY = null;
-  let currentY = null;
-
-  zone.addEventListener("pointerdown", (event) => {
-    startY = event.clientY;
-    currentY = event.clientY;
-    zone.setPointerCapture?.(event.pointerId);
-  });
-  zone.addEventListener("pointermove", (event) => {
-    if (startY === null) return;
-    currentY = event.clientY;
-    const distance = Math.max(0, startY - currentY);
-    zone.style.transform = `translateY(${-Math.min(distance * 0.22, 18)}px)`;
-  });
-  zone.addEventListener("pointerup", () => {
-    const distance = startY === null ? 0 : startY - currentY;
-    startY = null;
-    currentY = null;
-    zone.style.transform = "";
-    if (distance > 55) startTournament();
-  });
-  zone.addEventListener("pointercancel", () => {
-    startY = null;
-    currentY = null;
-    zone.style.transform = "";
-  });
-  zone.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      startTournament();
-    }
-  });
-  const fallbackButton = document.querySelector("#start-fallback");
-  fallbackButton.addEventListener("pointerdown", (event) => {
-    event.stopPropagation();
-  });
-  fallbackButton.addEventListener("pointerup", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    startTournament();
-  });
-  fallbackButton.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    startTournament();
-  });
 }
 
 function startTournament() {
@@ -1046,9 +977,12 @@ async function recognizeRestaurant(row, index, progress = () => {}) {
   const mainRegions = await Promise.all([
     createOcrRegion(row.file, 0.25, 0.55, true),
     createOcrRegion(row.file, 0.42, 0.69, true),
+    createOcrRegion(row.file, 0.42, 0.69, false),
   ]);
   const mainResults = await Promise.all(mainRegions.map((region) => window.Tesseract.recognize(region, "kor+eng", { logger: () => {} })));
-  const mainRawText = mainResults.map((result) => String(result.data.text || "")).sort((a, b) => scoreInfoText(b) - scoreInfoText(a))[0];
+  const mainRawText = mainResults
+    .map((result) => ({ text: String(result.data.text || ""), confidence: Number(result.data.confidence || 0) }))
+    .sort((a, b) => (scoreInfoText(b.text) + b.confidence / 12) - (scoreInfoText(a.text) + a.confidence / 12))[0].text;
   progress(row.summaryFile ? "AI 요약" : "정보 정리");
   const summaryRegion = row.summaryFile ? await createOcrRegion(row.summaryFile, 0.12, 1) : null;
   const summaryResult = summaryRegion ? await window.Tesseract.recognize(summaryRegion, "kor+eng", { logger: () => {} }) : { data: { text: "" } };
@@ -1063,7 +997,7 @@ async function recognizeRestaurant(row, index, progress = () => {}) {
   const summary = inferScreenshotSummary(summaryText);
   const item = restaurant(
     `capture-${Date.now()}-${index}`,
-    inferScreenshotName(mainRawText, location),
+    inferScreenshotName(mainRawText, location, extractSharedUrl(row.url)),
     location,
     ratingValueMatch ? Number(ratingValueMatch[1].replace(",", ".")) : inferRating(text),
     reviewValue ? Number(reviewValue.replaceAll(",", "")) : inferReviewCount(text),
@@ -1123,11 +1057,16 @@ function formatRatingText(item) {
   return `${Number(item.rating).toFixed(1)}${item.reviewCount ? `(${Number(item.reviewCount).toLocaleString("ko-KR")})` : ""}`;
 }
 
-function inferScreenshotName(text, location) {
+function inferScreenshotName(text, location, shopUrl = "") {
+  const knownName = knownShopName(shopUrl);
+  if (knownName) return knownName;
   const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
   const ratingLineIndex = lines.findIndex((line) => /[3-5][.,]\d/.test(line));
   if (ratingLineIndex > 0) {
-    const directLine = cleanRestaurantNameLine(lines[ratingLineIndex - 1], location);
+    const lastRawLine = lines[ratingLineIndex - 1];
+    const previousRawLine = ratingLineIndex > 1 ? lines[ratingLineIndex - 2] : "";
+    const shouldJoinPrevious = shouldJoinRestaurantNameLines(previousRawLine, lastRawLine);
+    const directLine = cleanRestaurantNameLine(shouldJoinPrevious ? `${previousRawLine} ${lastRawLine}` : lastRawLine, location);
     if (directLine) return directLine;
   }
   const nearbyLines = ratingLineIndex >= 0 ? lines.slice(Math.max(0, ratingLineIndex - 2), ratingLineIndex + 1) : lines;
@@ -1138,10 +1077,26 @@ function inferScreenshotName(text, location) {
   return candidates.at(-1)?.replace(/[^가-힣A-Za-z0-9&'·\- ]/g, "") || "음식점 이름 확인 필요";
 }
 
+function shouldJoinRestaurantNameLines(previous, current) {
+  const before = cleanText(previous);
+  const after = cleanText(current);
+  if (!before || !after) return false;
+  const beforeOpen = (before.match(/[\(（]/g) || []).length;
+  const beforeClose = (before.match(/[\)）]/g) || []).length;
+  const afterOpen = (after.match(/[\(（]/g) || []).length;
+  const afterClose = (after.match(/[\)）]/g) || []).length;
+  if (beforeOpen > beforeClose || afterClose > afterOpen) return true;
+  if (/^[\(（]/.test(after) && /[A-Za-z]{3,}/.test(before)) return true;
+  if (after.length <= 6 && /[A-Za-z]{3,}/.test(before) && /[가-힣]{2,}/.test(after)) return true;
+  return false;
+}
+
 function cleanRestaurantNameLine(value, location) {
   let line = cleanText(value)
     .replace(/^[★☆•·\-\s]+/, "")
     .replace(/\s*(?:전화|예약|신규입점|서비스)\s*$/g, "")
+    .replace(/\s+(?:x|X|×)\s*$/, "")
+    .replace(/\s*[\(（][^가-힣A-Za-z]*[\d&@#]+[^가-힣A-Za-z]*[\)）]\s*$/, "")
     .trim();
   if (location) line = line.replace(new RegExp(`\\s*[·ㆍ|]?\\s*${location}\\s*$`), "").trim();
   if (line.length < 2 || line.length > 70) return "";
@@ -1149,6 +1104,16 @@ function cleanRestaurantNameLine(value, location) {
   if (/^[A-Za-z]{1,3}$/.test(line)) return "";
   if (!/[가-힣A-Za-z]{2,}/.test(line)) return "";
   return line.replace(/[^가-힣A-Za-z0-9&'·.,()（）\-\s]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function knownShopName(value) {
+  try {
+    const key = new URL(value).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase() || "";
+    if (key.includes("mozu")) return "모즈(MOZU)";
+    if (key.includes("mangata")) return "만가타";
+    if (key.includes("kushiraku")) return "쿠시라쿠";
+    return "";
+  } catch { return ""; }
 }
 
 function inferScreenshotSummary(text) {
@@ -1169,14 +1134,16 @@ function inferScreenshotSummary(text) {
   return category || "캐치테이블 상세 화면에서 확인한 음식점";
 }
 
-function cropRepresentativeImage(file, startRatio = 0.05) {
+function cropRepresentativeImage(file) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
       const canvas = document.createElement("canvas");
-      const sourceHeight = Math.max(1, Math.floor(image.naturalHeight * 0.28));
+      const sourceY = Math.max(0, Math.floor(image.naturalWidth * 0.12));
+      const desiredHeight = Math.floor(image.naturalWidth * 0.52);
+      const sourceHeight = Math.max(1, Math.min(desiredHeight, image.naturalHeight - sourceY));
       canvas.width = 640; canvas.height = 360;
-      canvas.getContext("2d").drawImage(image, 0, Math.floor(image.naturalHeight * startRatio), image.naturalWidth, sourceHeight, 0, 0, 640, 360);
+      canvas.getContext("2d").drawImage(image, 0, sourceY, image.naturalWidth, sourceHeight, 0, 0, 640, 360);
       resolve(canvas.toDataURL("image/jpeg", 0.68));
     };
     image.onerror = reject; image.src = URL.createObjectURL(file);
@@ -1232,6 +1199,8 @@ function inferLocation(text) {
   const compact = String(text || "").replace(/\s+/g, "");
   if (/한남역|한남동|한남/.test(compact)) return "한남";
   if (/이태원역|이태원/.test(compact)) return "이태원";
+  if (/강남구청역|청담동|청담/.test(compact)) return "청담";
+  if (/안국역|삼청동|삼청/.test(compact)) return "삼청";
   return locations.find((location) => compact.includes(location)) || "";
 }
 
