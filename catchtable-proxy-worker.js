@@ -33,10 +33,12 @@ export default {
     }
 
     const isCatchtableHost =
-      target.hostname === "catchtable.co.kr" || target.hostname.endsWith(".catchtable.co.kr");
-    const isVotePage = target.pathname.includes("/ct/shop/list/vote/");
-    if (target.protocol !== "https:" || !isCatchtableHost || !isVotePage) {
-      return json({ error: "캐치테이블 함께 고르기 링크만 허용됩니다." }, 403, corsHeaders);
+      target.hostname === "catchtable.co.kr" ||
+      target.hostname.endsWith(".catchtable.co.kr") ||
+      target.hostname === "catchtable.page.link" ||
+      target.hostname === "catchtable.onelink.me";
+    if (target.protocol !== "https:" || !isCatchtableHost) {
+      return json({ error: "캐치테이블 공유 링크만 허용됩니다." }, 403, corsHeaders);
     }
 
     try {

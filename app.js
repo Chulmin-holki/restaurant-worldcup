@@ -18,10 +18,7 @@ const state = {
   winners: [],
   bye: null,
   priorityRestaurantId: null,
-  transitionEntrants: [],
 };
-
-let roundTransitionTimer = null;
 
 const sampleRestaurants = [
   restaurant("sample-1", "라메종 한남", "한남", 4.8, 428, "차분한 분위기에서 즐기는 컨템퍼러리 프렌치 코스", "https://app.catchtable.co.kr"),
@@ -58,8 +55,8 @@ function render() {
   if (state.view === "loading") renderLoading();
   if (state.view === "manual") renderManual();
   if (state.view === "review") renderReview();
+  if (state.view === "roundIntro") renderRoundIntro();
   if (state.view === "tournament") renderTournament();
-  if (state.view === "roundTransition") renderRoundTransition();
   if (state.view === "result") renderResult();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
@@ -100,7 +97,7 @@ function renderHome() {
         <label>
           <span class="field-label">캐치테이블 ‘함께 고르기’ 링크</span>
           <span class="input-shell">
-            <input id="url-input" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://app.catchtable.co.kr/ct/shop/list/vote/..." value="${escapeAttribute(state.sourceUrl)}" />
+            <input id="url-input" name="url" type="text" inputmode="url" autocomplete="url" placeholder="함께 고르기 링크를 붙여넣어 주세요" value="${escapeAttribute(state.sourceUrl)}" />
           </span>
           <span class="field-hint">링크 읽기가 제한되면 음식점을 직접 확인·보완할 수 있는 화면으로 이어져요.</span>
         </label>
@@ -127,15 +124,16 @@ function renderHome() {
 async function handleStartSubmit(event) {
   event.preventDefault();
   const theme = document.querySelector("#theme-input").value.trim();
-  const sourceUrl = document.querySelector("#url-input").value.trim();
+  const sourceInput = document.querySelector("#url-input").value.trim();
+  const sourceUrl = extractSharedUrl(sourceInput);
 
   if (!theme) {
     showToast("월드컵 주제를 먼저 입력해 주세요.");
     document.querySelector("#theme-input").focus();
     return;
   }
-  if (!isCatchtableVoteUrl(sourceUrl)) {
-    showToast("캐치테이블 ‘함께 고르기’ 링크를 확인해 주세요.");
+  if (!sourceUrl) {
+    showToast("공유 링크를 붙여넣어 주세요.");
     document.querySelector("#url-input").focus();
     return;
   }
@@ -368,7 +366,7 @@ function bindReviewGestures() {
 }
 
 function startTournament() {
-  if (state.view === "tournament") return;
+  if (state.view === "tournament" || state.view === "roundIntro") return;
   if (state.restaurants.length < 2) {
     showToast("후보 음식점이 두 곳 이상 필요해요.");
     return;
@@ -398,14 +396,61 @@ function prepareRound(entrants) {
   }
   state.matchIndex = 0;
   state.winners = [];
-  state.view = "tournament";
-  render();
-
   if (state.bye) {
     state.priorityRestaurantId = state.bye.id;
   } else {
     state.priorityRestaurantId = null;
   }
+
+  state.view = "roundIntro";
+  render();
+}
+
+function renderRoundIntro() {
+  const entrantCount = state.roundEntrants.length;
+  const stageLabel = roundStageLabel(entrantCount);
+  const roundTitle = entrantCount === 2 ? "결승" : `${state.roundNumber}라운드`;
+  const matchCount = state.matches.length;
+  const byeCopy = state.bye
+    ? `<strong>${escapeHtml(state.bye.name)}</strong>은(는) 이번 라운드 부전승이에요.`
+    : "모든 후보가 이번 라운드에서 맞붙어요.";
+
+  app.innerHTML = shell(`
+    <section class="screen round-transition-screen round-intro-screen">
+      ${topbar(`ROUND ${state.roundNumber}`)}
+      <div class="round-transition-center">
+        <div class="round-clear-mark round-start-mark" aria-hidden="true">
+          <span>${entrantCount}</span>
+          <small>강</small>
+        </div>
+        <p class="round-transition-eyebrow">NEXT ROUND</p>
+        <h1>${escapeHtml(roundTitle)} · ${escapeHtml(stageLabel)}</h1>
+        <p class="round-transition-copy"><strong>${entrantCount}곳</strong>이 ${matchCount}개의 매치로 선택을 기다리고 있어요.</p>
+        <div class="round-guide-card">
+          <span class="round-guide-icon" aria-hidden="true">↔</span>
+          <p>위 음식점은 <strong>왼쪽</strong>, 아래 음식점은 <strong>오른쪽</strong>으로 밀어 선택하세요.<br />${byeCopy}</p>
+        </div>
+        <div class="advancer-list" aria-label="이번 라운드 음식점">
+          ${state.roundEntrants.map((item) => `<span>${escapeHtml(item.name)}</span>`).join("")}
+        </div>
+        <div class="round-flow" aria-hidden="true">
+          <span class="is-complete">${escapeHtml(stageLabel)}</span>
+          <i>→</i>
+          <span>START</span>
+        </div>
+      </div>
+      <button id="begin-round" class="round-continue-button" type="button">
+        ${escapeHtml(roundTitle)} 시작 <span aria-hidden="true">→</span>
+      </button>
+    </section>`, "round-transition-shell");
+
+  document.querySelector("#begin-round").addEventListener("click", beginCurrentRound);
+}
+
+function beginCurrentRound() {
+  if (state.view !== "roundIntro") return;
+  state.view = "tournament";
+  render();
 }
 
 function renderTournament() {
@@ -568,58 +613,7 @@ function advanceRound() {
     launchConfetti();
     return;
   }
-  showRoundTransition(nextEntrants);
-}
-
-function showRoundTransition(nextEntrants) {
-  state.transitionEntrants = nextEntrants;
-  state.view = "roundTransition";
-  render();
-}
-
-function renderRoundTransition() {
-  const completedRound = state.roundNumber;
-  const nextRound = completedRound + 1;
-  const nextEntrants = state.transitionEntrants;
-  const nextLabel = nextEntrants.length === 2 ? "결승" : `${nextRound}라운드`;
-
-  app.innerHTML = shell(`
-    <section class="screen round-transition-screen">
-      ${topbar(`ROUND ${completedRound} CLEAR`)}
-      <div class="round-transition-center">
-        <div class="round-clear-mark" aria-hidden="true">
-          <span>${completedRound}</span>
-          <small>ROUND</small>
-        </div>
-        <p class="round-transition-eyebrow">ROUND COMPLETE</p>
-        <h1>${completedRound}라운드 종료</h1>
-        <p class="round-transition-copy"><strong>${nextEntrants.length}곳</strong>이 ${nextLabel}에 진출했어요.</p>
-        <div class="advancer-list" aria-label="다음 라운드 진출 음식점">
-          ${nextEntrants.map((item) => `<span>${escapeHtml(item.name)}</span>`).join("")}
-        </div>
-        <div class="round-flow" aria-hidden="true">
-          <span class="is-complete">ROUND ${completedRound}</span>
-          <i>→</i>
-          <span>ROUND ${nextRound}</span>
-        </div>
-      </div>
-      <button id="continue-round" class="round-continue-button" type="button">
-        ${nextLabel} 시작 <span aria-hidden="true">→</span>
-      </button>
-    </section>`, "round-transition-shell");
-
-  const continueButton = document.querySelector("#continue-round");
-  continueButton.addEventListener("click", continueToNextRound);
-  roundTransitionTimer = window.setTimeout(continueToNextRound, 1600);
-}
-
-function continueToNextRound() {
-  if (state.view !== "roundTransition") return;
-  window.clearTimeout(roundTransitionTimer);
-  roundTransitionTimer = null;
-  const entrants = [...state.transitionEntrants];
-  state.transitionEntrants = [];
-  prepareRound(entrants);
+  prepareRound(nextEntrants);
 }
 
 function renderResult() {
@@ -1014,14 +1008,21 @@ function looksLikePageTitle(name) {
   return /(캐치테이블|catchtable|함께\s*고르기|로그인|예약|월드컵)/i.test(name);
 }
 
-function isCatchtableVoteUrl(value) {
-  try {
-    const url = new URL(value);
-    const hostOk = url.hostname === "catchtable.co.kr" || url.hostname.endsWith(".catchtable.co.kr");
-    return url.protocol === "https:" && hostOk && url.pathname.includes("/ct/shop/list/vote/");
-  } catch {
-    return false;
+function extractSharedUrl(value) {
+  const text = String(value || "").replaceAll("&amp;", "&").trim();
+  if (!text) return "";
+
+  const candidates = text.match(/https?:\/\/[^\s<>"']+/gi) || [];
+  if (!candidates.length && /^[\w.-]+\.[a-z]{2,}(?:\/\S*)?$/i.test(text)) {
+    candidates.push(`https://${text}`);
   }
+
+  for (const candidate of candidates) {
+    const cleaned = candidate.replace(/[\])},>，。！？!?]+$/g, "");
+    const normalized = safeHttpUrl(cleaned);
+    if (normalized) return normalized;
+  }
+  return "";
 }
 
 function safeHttpUrl(value) {
@@ -1075,6 +1076,10 @@ function roundLabel(count) {
   if (count === 2) return "FINAL";
   if (count === 4) return "SEMI FINAL";
   return `ROUND ${state.roundNumber} · ${count}강`;
+}
+
+function roundStageLabel(count) {
+  return `${count}강`;
 }
 
 function baseUrl() {
