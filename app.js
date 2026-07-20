@@ -4,6 +4,7 @@ const app = document.querySelector("#app");
 const toastElement = document.querySelector("#toast");
 const confettiElement = document.querySelector("#confetti");
 const config = window.APP_CONFIG || {};
+const APP_VERSION = "v21";
 
 const state = {
   view: "home",
@@ -66,7 +67,7 @@ function render() {
 }
 
 function shell(content, extraClass = "") {
-  return `<main class="app-shell ${extraClass}">${content}</main>`;
+  return `<main class="app-shell ${extraClass}">${content}<span class="app-version" aria-label="앱 버전 ${APP_VERSION}">${APP_VERSION}</span></main>`;
 }
 
 function topbar(step = "") {
@@ -814,10 +815,23 @@ function collectRestaurantObjects(root, output, sourceUrl) {
 
 function renderSharedPayload() {
   return {
-    v: 2,
+    v: 3,
     t: state.theme,
-    r: state.restaurants.map(({ name, location, rating, reviewCount, summary, url }) => [name, location, rating || 0, reviewCount || 0, summary || "", url || ""]),
+    r: state.restaurants.map(({ name, location, rating, reviewCount, summary, url }) => [name, location, rating || 0, reviewCount || 0, (summary || "").slice(0, 100), compactRestaurantUrl(url)]),
   };
+}
+
+function compactRestaurantUrl(value) {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/\/ct\/shop\/([^/?#]+)/);
+    if (/catchtable\.co\.kr$/i.test(url.hostname) && match) return `@${match[1]}`;
+    return `${url.origin}${url.pathname}`;
+  } catch { return ""; }
+}
+
+function expandRestaurantUrl(value) {
+  return String(value || "").startsWith("@") ? `https://app.catchtable.co.kr/ct/shop/${String(value).slice(1)}` : value;
 }
 
 async function sharedUrl() {
@@ -827,15 +841,13 @@ async function sharedUrl() {
 async function shareCurrentWorldcup() {
   const url = await sharedUrl();
   const title = `[${state.theme}] 뭐먹지 월드컵`;
-  const text = `${state.restaurants.length}곳 중 오늘의 음식점을 골라주세요.`;
-  await shareOrCopy({ title, text, url }, "월드컵 링크를 복사했어요.");
+  await shareOrCopy({ title, url }, "월드컵 링크를 복사했어요.");
 }
 
 async function shareResult(winner) {
   const url = await sharedUrl();
   const title = `${winner.name} 우승!`;
-  const text = `[${state.theme}] 뭐먹지 월드컵의 최종 선택은 ${winner.name}입니다.`;
-  await shareOrCopy({ title, text, url }, "결과와 다시 하기 링크를 복사했어요.");
+  await shareOrCopy({ title, url }, "결과와 다시 하기 링크를 복사했어요.");
 }
 
 async function shareOrCopy(data, copyMessage) {
@@ -863,10 +875,10 @@ async function readSharedWorldcup() {
   if (!match) return null;
   try {
     const raw = await decodeSharedPayload(match[1]);
-    const data = raw?.v === 2 ? {
+    const data = raw?.v === 2 || raw?.v === 3 ? {
       theme: raw.t,
       sourceUrl: "",
-      restaurants: raw.r.map((item, index) => ({ id: `shared-${index}-${hashString(String(item[5] || item[0]))}`, name: item[0], location: item[1], rating: item[2], reviewCount: item[3], summary: item[4], url: item[5] })),
+      restaurants: raw.r.map((item, index) => ({ id: `shared-${index}-${hashString(String(item[5] || item[0]))}`, name: item[0], location: item[1], rating: item[2], reviewCount: item[3], summary: item[4], url: raw.v === 3 ? expandRestaurantUrl(item[5]) : item[5] })),
     } : raw;
     if (!data || typeof data.theme !== "string" || !Array.isArray(data.restaurants) || data.restaurants.length < 2) return null;
     return data;
