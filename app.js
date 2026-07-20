@@ -18,7 +18,10 @@ const state = {
   winners: [],
   bye: null,
   priorityRestaurantId: null,
+  transitionEntrants: [],
 };
+
+let roundTransitionTimer = null;
 
 const sampleRestaurants = [
   restaurant("sample-1", "라메종 한남", "한남", 4.8, 428, "차분한 분위기에서 즐기는 컨템퍼러리 프렌치 코스", "https://app.catchtable.co.kr"),
@@ -56,6 +59,7 @@ function render() {
   if (state.view === "manual") renderManual();
   if (state.view === "review") renderReview();
   if (state.view === "tournament") renderTournament();
+  if (state.view === "roundTransition") renderRoundTransition();
   if (state.view === "result") renderResult();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
@@ -564,7 +568,58 @@ function advanceRound() {
     launchConfetti();
     return;
   }
-  prepareRound(nextEntrants);
+  showRoundTransition(nextEntrants);
+}
+
+function showRoundTransition(nextEntrants) {
+  state.transitionEntrants = nextEntrants;
+  state.view = "roundTransition";
+  render();
+}
+
+function renderRoundTransition() {
+  const completedRound = state.roundNumber;
+  const nextRound = completedRound + 1;
+  const nextEntrants = state.transitionEntrants;
+  const nextLabel = nextEntrants.length === 2 ? "결승" : `${nextRound}라운드`;
+
+  app.innerHTML = shell(`
+    <section class="screen round-transition-screen">
+      ${topbar(`ROUND ${completedRound} CLEAR`)}
+      <div class="round-transition-center">
+        <div class="round-clear-mark" aria-hidden="true">
+          <span>${completedRound}</span>
+          <small>ROUND</small>
+        </div>
+        <p class="round-transition-eyebrow">ROUND COMPLETE</p>
+        <h1>${completedRound}라운드 종료</h1>
+        <p class="round-transition-copy"><strong>${nextEntrants.length}곳</strong>이 ${nextLabel}에 진출했어요.</p>
+        <div class="advancer-list" aria-label="다음 라운드 진출 음식점">
+          ${nextEntrants.map((item) => `<span>${escapeHtml(item.name)}</span>`).join("")}
+        </div>
+        <div class="round-flow" aria-hidden="true">
+          <span class="is-complete">ROUND ${completedRound}</span>
+          <i>→</i>
+          <span>ROUND ${nextRound}</span>
+        </div>
+      </div>
+      <button id="continue-round" class="round-continue-button" type="button">
+        ${nextLabel} 시작 <span aria-hidden="true">→</span>
+      </button>
+    </section>`, "round-transition-shell");
+
+  const continueButton = document.querySelector("#continue-round");
+  continueButton.addEventListener("click", continueToNextRound);
+  roundTransitionTimer = window.setTimeout(continueToNextRound, 1600);
+}
+
+function continueToNextRound() {
+  if (state.view !== "roundTransition") return;
+  window.clearTimeout(roundTransitionTimer);
+  roundTransitionTimer = null;
+  const entrants = [...state.transitionEntrants];
+  state.transitionEntrants = [];
+  prepareRound(entrants);
 }
 
 function renderResult() {
