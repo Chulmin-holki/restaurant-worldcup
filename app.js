@@ -83,7 +83,7 @@ function renderHome() {
       ${topbar("MAKE")}
       <div class="hero">
         <p class="eyebrow">오늘의 한 곳을 고르는 가장 재밌는 방법</p>
-        <h1>고민은 짧게,<br />선택은 월드컵으로.</h1>
+        <h1>음식점 고르기<br />월드컵🏆</h1>
         <p class="hero-copy">음식점 상세 화면 캡처와 캐치테이블 링크를 넣으면 정보를 읽어 토너먼트로 펼쳐줘요.</p>
       </div>
 
@@ -107,6 +107,7 @@ function renderHome() {
 
         <div class="home-actions">
           <button class="primary-button" type="submit">입력 완료 <span aria-hidden="true">→</span></button>
+          <button id="reset-draft" class="reset-draft-button" type="button">작성 중인 내용 전체 초기화</button>
         </div>
       </form>
 
@@ -115,6 +116,19 @@ function renderHome() {
 
   document.querySelector("#start-form").addEventListener("submit", handleStartSubmit);
   bindCaptureInputs();
+  document.querySelector("#reset-draft").addEventListener("click", resetHomeDraft);
+}
+
+function resetHomeDraft() {
+  if (!window.confirm("작성 중인 주제, 링크와 선택한 캡처를 모두 초기화할까요?")) return;
+  state.theme = "";
+  state.sourceUrl = "";
+  state.captureRows = [blankCapture(), blankCapture()];
+  state.restaurants = [];
+  state.manualRows = [];
+  localStorage.removeItem("food-worldcup-draft");
+  renderHome();
+  showToast("작성 중인 내용을 모두 초기화했어요.");
 }
 
 function captureInputTemplate(row, index) {
@@ -1029,22 +1043,30 @@ function fileToDataUrl(file) {
 async function recognizeRestaurant(row, index, progress = () => {}) {
   if (!window.Tesseract) throw new Error("OCR unavailable");
   progress("기본 정보");
-  const mainRegion = await createOcrRegion(row.file, 0.27, 0.62);
-  const mainResult = await window.Tesseract.recognize(mainRegion, "kor+eng", { logger: () => {} });
+  const mainRegions = await Promise.all([
+    createOcrRegion(row.file, 0.25, 0.55, true),
+    createOcrRegion(row.file, 0.42, 0.69, true),
+  ]);
+  const mainResults = await Promise.all(mainRegions.map((region) => window.Tesseract.recognize(region, "kor+eng", { logger: () => {} })));
+  const mainRawText = mainResults.map((result) => String(result.data.text || "")).sort((a, b) => scoreInfoText(b) - scoreInfoText(a))[0];
   progress(row.summaryFile ? "AI 요약" : "정보 정리");
   const summaryRegion = row.summaryFile ? await createOcrRegion(row.summaryFile, 0.12, 1) : null;
   const summaryResult = summaryRegion ? await window.Tesseract.recognize(summaryRegion, "kor+eng", { logger: () => {} }) : { data: { text: "" } };
-  const text = normalizeOcrText(mainResult.data.text);
+  const text = normalizeOcrText(mainRawText);
   const summaryText = String(summaryResult.data.text || "");
-  const ratingMatch = text.match(/([3-5][.,]\d)\s*[\(（]\s*([\d,]{2,})\s*[\)）]/) || text.match(/(?:★|별점)?\s*([3-5][.,]\d)\s*(?:[·ㆍ|]?\s*)?(?:리뷰)?\s*([\d,]{2,})\s*(?:개)?/);
+  const ratingValueMatch = text.match(/(?:★|별점)?\s*([3-5][.,]\d)/);
+  const parenthesizedReview = text.match(/[3-5][.,]\d\s*[\(（]\s*([\d,]{2,})\s*[\)）]/);
+  const labeledReview = text.match(/리뷰[^0-9]{0,8}([\d,]{2,})/);
+  const nearbyReview = ratingValueMatch ? text.slice((ratingValueMatch.index || 0) + ratingValueMatch[0].length, (ratingValueMatch.index || 0) + ratingValueMatch[0].length + 40).match(/([\d,]{2,})/) : null;
+  const reviewValue = parenthesizedReview?.[1] || labeledReview?.[1] || nearbyReview?.[1] || "";
   const location = inferLocation(text);
   const summary = inferScreenshotSummary(summaryText);
   const item = restaurant(
     `capture-${Date.now()}-${index}`,
-    inferScreenshotName(text, location),
+    inferScreenshotName(mainRawText, location),
     location,
-    ratingMatch ? Number(ratingMatch[1].replace(",", ".")) : inferRating(text),
-    ratingMatch ? Number(ratingMatch[2].replaceAll(",", "")) : inferReviewCount(text),
+    ratingValueMatch ? Number(ratingValueMatch[1].replace(",", ".")) : inferRating(text),
+    reviewValue ? Number(reviewValue.replaceAll(",", "")) : inferReviewCount(text),
     summary,
     extractSharedUrl(row.url),
     await cropRepresentativeImage(row.file)
@@ -1061,7 +1083,12 @@ function shortShopLink(url) {
 
 function normalizeOcrText(value) { return String(value || "").replace(/[|]/g, " ").replace(/\s+/g, " ").trim(); }
 
-function createOcrRegion(file, startRatio, endRatio) {
+function scoreInfoText(value) {
+  const text = normalizeOcrText(value);
+  return (/[3-5][.,]\d/.test(text) ? 8 : 0) + (/리뷰|[\(（]\d{2,}[\)）]/.test(text) ? 5 : 0) + (inferLocation(text) ? 4 : 0) + ((text.match(/[가-힣]{2,}/g) || []).length);
+}
+
+function createOcrRegion(file, startRatio, endRatio, enhanceText = false) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
@@ -1075,6 +1102,15 @@ function createOcrRegion(file, startRatio, endRatio) {
       const context = canvas.getContext("2d");
       context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(image, 0, startY, image.naturalWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+      if (enhanceText) {
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+        for (let offset = 0; offset < pixels.data.length; offset += 4) {
+          const gray = pixels.data[offset] * 0.299 + pixels.data[offset + 1] * 0.587 + pixels.data[offset + 2] * 0.114;
+          const contrasted = gray < 175 ? Math.max(0, gray * 0.72) : Math.min(255, 205 + (gray - 175) * 1.65);
+          pixels.data[offset] = pixels.data[offset + 1] = pixels.data[offset + 2] = contrasted;
+        }
+        context.putImageData(pixels, 0, 0);
+      }
       resolve(canvas.toDataURL("image/jpeg", 0.92));
       URL.revokeObjectURL(image.src);
     };
@@ -1084,15 +1120,35 @@ function createOcrRegion(file, startRatio, endRatio) {
 
 function formatRatingText(item) {
   if (!item.rating) return "";
-  return `${Number(item.rating).toFixed(1)}${item.reviewCount ? `(${Number(item.reviewCount)})` : ""}`;
+  return `${Number(item.rating).toFixed(1)}${item.reviewCount ? `(${Number(item.reviewCount).toLocaleString("ko-KR")})` : ""}`;
 }
 
 function inferScreenshotName(text, location) {
-  const beforeRating = text.split(/(?:★\s*)?[3-5][.,]\d/)[0];
+  const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
+  const ratingLineIndex = lines.findIndex((line) => /[3-5][.,]\d/.test(line));
+  if (ratingLineIndex > 0) {
+    const directLine = cleanRestaurantNameLine(lines[ratingLineIndex - 1], location);
+    if (directLine) return directLine;
+  }
+  const nearbyLines = ratingLineIndex >= 0 ? lines.slice(Math.max(0, ratingLineIndex - 2), ratingLineIndex + 1) : lines;
+  const beforeRating = nearbyLines.join(" ").split(/(?:★\s*)?[3-5][.,]\d/)[0];
   const tokens = beforeRating.split(/\s+/).filter((token) => token.length >= 2 && token.length <= 18);
   const ignored = /^(함께|고르기|전화|꽃|주문|서비스|신규입점|흑백요리사|시즌|위치|예약)$/;
-  const candidates = tokens.filter((token) => !ignored.test(token) && token !== location && !/\d/.test(token));
+  const candidates = tokens.filter((token) => !ignored.test(token) && token !== location && !/\d/.test(token) && (/[가-힣]{2,}/.test(token) || /[A-Za-z]{3,}/.test(token)));
   return candidates.at(-1)?.replace(/[^가-힣A-Za-z0-9&'·\- ]/g, "") || "음식점 이름 확인 필요";
+}
+
+function cleanRestaurantNameLine(value, location) {
+  let line = cleanText(value)
+    .replace(/^[★☆•·\-\s]+/, "")
+    .replace(/\s*(?:전화|예약|신규입점|서비스)\s*$/g, "")
+    .trim();
+  if (location) line = line.replace(new RegExp(`\\s*[·ㆍ|]?\\s*${location}\\s*$`), "").trim();
+  if (line.length < 2 || line.length > 70) return "";
+  if (/^(함께\s*고르기|추천순|필터|지역|음식\s*종류|홈|메뉴|사진|리뷰|매장정보)$/i.test(line)) return "";
+  if (/^[A-Za-z]{1,3}$/.test(line)) return "";
+  if (!/[가-힣A-Za-z]{2,}/.test(line)) return "";
+  return line.replace(/[^가-힣A-Za-z0-9&'·.,()（）\-\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
 function inferScreenshotSummary(text) {
@@ -1172,8 +1228,11 @@ function firstValue(object, keys) {
 }
 
 function inferLocation(text) {
-  const locations = ["한남", "이태원", "용산", "청담", "성수", "압구정", "신사", "강남", "서초", "잠실", "삼청", "종로", "을지로", "여의도", "마포", "연남", "합정", "서촌", "해방촌", "광화문"];
-  return locations.find((location) => text.includes(location)) || "";
+  const locations = ["한남", "이태원", "용산", "청담", "성수", "압구정", "신사", "강남", "서초", "잠실", "삼청", "종로", "을지로", "여의도", "마포", "연남", "합정", "서촌", "해방촌", "광화문", "하남", "미사", "판교", "분당", "송도", "수원", "광교", "일산"];
+  const compact = String(text || "").replace(/\s+/g, "");
+  if (/한남역|한남동|한남/.test(compact)) return "한남";
+  if (/이태원역|이태원/.test(compact)) return "이태원";
+  return locations.find((location) => compact.includes(location)) || "";
 }
 
 function inferRating(text) {
