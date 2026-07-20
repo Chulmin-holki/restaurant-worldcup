@@ -1,4 +1,4 @@
-const CACHE_NAME = "food-worldcup-v5";
+const CACHE_NAME = "food-worldcup-v8";
 const APP_SHELL = [
   "./",
   "./index.html",

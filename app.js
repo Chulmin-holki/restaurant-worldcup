@@ -43,6 +43,9 @@ function initialize() {
     if (draft) {
       state.theme = draft.theme || "";
       state.sourceUrl = draft.sourceUrl || "";
+      if (Array.isArray(draft.captureUrls) && draft.captureUrls.length >= 2) {
+        state.captureRows = draft.captureUrls.map((url) => ({ ...blankCapture(), url }));
+      }
     }
   }
 
@@ -117,33 +120,42 @@ function renderHome() {
 function captureInputTemplate(row, index) {
   return `<article class="capture-input-card" data-index="${index}">
     <div class="capture-card-head"><strong>RESTAURANT ${String(index + 1).padStart(2, "0")}</strong>${state.captureRows.length > 2 ? `<button type="button" class="remove-capture" aria-label="삭제">×</button>` : ""}</div>
-    <label class="capture-drop ${row.preview ? "has-image" : ""}">
-      ${row.preview ? `<img src="${escapeAttribute(row.preview)}" alt="${index + 1}번 기본 정보 캡처" />` : `<span><b>① 기본 정보 캡처</b><small>이름·지역·별점이 보이는 화면</small></span>`}
-      <input class="capture-file" data-capture="main" type="file" accept="image/*" />
+    <label class="capture-drop multi-capture-drop ${row.preview ? "has-image" : ""}">
+      ${row.preview ? `<span class="capture-previews">
+        <span><img src="${escapeAttribute(row.preview)}" alt="${index + 1}번 기본 정보 캡처" /><small>① 기본 정보</small></span>
+        ${row.summaryPreview ? `<span><img src="${escapeAttribute(row.summaryPreview)}" alt="${index + 1}번 AI 요약 캡처" /><small>② AI 요약</small></span>` : `<span class="empty-preview"><b>＋</b><small>② AI 요약 선택사항</small></span>`}
+      </span>` : `<span><b>＋ 캡처 한 번에 선택</b><small>첫 번째: 기본 정보 · 두 번째: AI 요약(선택)</small></span>`}
+      <input class="capture-file" type="file" accept="image/*" multiple />
     </label>
-    <label class="capture-drop summary-drop ${row.summaryPreview ? "has-image" : ""}">
-      ${row.summaryPreview ? `<img src="${escapeAttribute(row.summaryPreview)}" alt="${index + 1}번 AI 요약 캡처" />` : `<span><b>② AI 요약 캡처</b><small>아래로 내려 AI 요약이 보이는 화면</small></span>`}
-      <input class="capture-file" data-capture="summary" type="file" accept="image/*" />
-    </label>
+    ${row.summaryPreview ? `<button class="swap-captures" type="button">⇄ 두 캡처 순서 바꾸기</button>` : ""}
     <textarea class="capture-url" inputmode="url" placeholder="캐치테이블에서 복사한 공유 문구 또는 링크">${escapeHtml(row.url)}</textarea>
+    <div class="extracted-link">${extractSharedUrl(row.url) ? `✓ 링크 확인: ${escapeHtml(shortShopLink(extractSharedUrl(row.url)))}` : row.url ? "링크를 찾지 못했어요" : ""}</div>
   </article>`;
 }
 
 function bindCaptureInputs() {
-  document.querySelector("#theme-input").addEventListener("input", (event) => { state.theme = event.target.value; });
+  document.querySelector("#theme-input").addEventListener("input", (event) => { state.theme = event.target.value; writeDraft(); });
   document.querySelector("#add-capture").addEventListener("click", () => { state.captureRows.push(blankCapture()); renderHome(); });
   document.querySelectorAll(".remove-capture").forEach((button) => button.addEventListener("click", () => {
     state.captureRows.splice(Number(button.closest(".capture-input-card").dataset.index), 1); renderHome();
   }));
   document.querySelectorAll(".capture-url").forEach((input) => input.addEventListener("input", () => {
     state.captureRows[Number(input.closest(".capture-input-card").dataset.index)].url = input.value;
+    writeDraft();
   }));
   document.querySelectorAll(".capture-file").forEach((input) => input.addEventListener("change", async () => {
-    const file = input.files?.[0]; if (!file) return;
+    const files = [...(input.files || [])].slice(0, 2); if (!files.length) return;
     const index = Number(input.closest(".capture-input-card").dataset.index);
-    const isSummary = input.dataset.capture === "summary";
-    state.captureRows[index][isSummary ? "summaryFile" : "file"] = file;
-    state.captureRows[index][isSummary ? "summaryPreview" : "preview"] = await fileToDataUrl(file);
+    state.captureRows[index].file = files[0];
+    state.captureRows[index].preview = await fileToDataUrl(files[0]);
+    state.captureRows[index].summaryFile = files[1] || null;
+    state.captureRows[index].summaryPreview = files[1] ? await fileToDataUrl(files[1]) : "";
+    renderHome();
+  }));
+  document.querySelectorAll(".swap-captures").forEach((button) => button.addEventListener("click", () => {
+    const row = state.captureRows[Number(button.closest(".capture-input-card").dataset.index)];
+    [row.file, row.summaryFile] = [row.summaryFile, row.file];
+    [row.preview, row.summaryPreview] = [row.summaryPreview, row.preview];
     renderHome();
   }));
 }
@@ -157,9 +169,14 @@ async function handleStartSubmit(event) {
     document.querySelector("#theme-input").focus();
     return;
   }
-  const validRows = state.captureRows.filter((row) => row.file && row.summaryFile && extractSharedUrl(row.url));
+  const validRows = state.captureRows.filter((row) => row.file && extractSharedUrl(row.url));
   if (validRows.length < 2) {
-    showToast("기본 캡처·AI 요약 캡처·링크가 모두 있는 음식점을 두 곳 이상 넣어 주세요.");
+    showToast("기본 캡처와 링크가 있는 음식점을 두 곳 이상 넣어 주세요.");
+    return;
+  }
+  const urls = validRows.map((row) => extractSharedUrl(row.url));
+  if (new Set(urls).size !== urls.length) {
+    showToast("같은 캐치테이블 링크가 두 번 들어가 있어요.");
     return;
   }
 
@@ -172,8 +189,8 @@ async function handleStartSubmit(event) {
   try {
     state.restaurants = [];
     for (let index = 0; index < validRows.length; index += 1) {
-      showOcrProgress(index + 1, validRows.length);
-      state.restaurants.push(await recognizeRestaurant(validRows[index], index));
+      showOcrProgress(index + 1, validRows.length, "기본 정보");
+      state.restaurants.push(await recognizeRestaurant(validRows[index], index, (stage) => showOcrProgress(index + 1, validRows.length, stage)));
     }
     state.manualRows = state.restaurants.map((item) => ({ ...item }));
     state.view = "manual";
@@ -239,12 +256,17 @@ function editorTemplate(item, index) {
       ${state.manualRows.length > 2 ? `<button class="remove-editor" type="button" aria-label="${index + 1}번 음식점 삭제">×</button>` : ""}
       <div class="editor-grid">
         ${item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
+        ${item.uncertain?.length ? `<div class="uncertain-note">확인 필요: ${item.uncertain.map(escapeHtml).join(", ")}</div>` : ""}
         <input class="manual-input" data-field="name" placeholder="음식점 이름 *" value="${escapeAttribute(item.name)}" />
         <input class="manual-input" data-field="location" placeholder="위치 *" value="${escapeAttribute(item.location)}" />
         <input class="manual-input wide" data-field="ratingText" inputmode="decimal" placeholder="별점(리뷰 수), 예: 4.9(329)" value="${escapeAttribute(item.ratingText || formatRatingText(item))}" />
         <input class="manual-input wide" data-field="summary" placeholder="간단한 요약" value="${escapeAttribute(item.summary)}" />
         <input class="manual-input wide" data-field="url" inputmode="url" placeholder="캐치테이블 링크 *" value="${escapeAttribute(item.url)}" />
       </div>
+      ${Number.isInteger(item.captureIndex) ? `<div class="editor-tools">
+        <button class="reocr-button ghost-button" type="button">↻ 다시 인식</button>
+        <label>사진 위치 <input class="image-position" type="range" min="0" max="35" value="5" /></label>
+      </div>` : ""}
     </article>`;
 }
 
@@ -264,6 +286,23 @@ function bindManualEditors() {
       renderManual();
     });
   });
+
+  document.querySelectorAll(".reocr-button").forEach((button) => button.addEventListener("click", async () => {
+    const index = Number(button.closest(".restaurant-editor").dataset.index);
+    const captureIndex = state.manualRows[index].captureIndex;
+    button.disabled = true; button.textContent = "인식 중…";
+    try {
+      const refreshed = await recognizeRestaurant(state.captureRows[captureIndex], captureIndex);
+      state.manualRows[index] = refreshed; renderManual(); showToast("이 음식점만 다시 읽었어요.");
+    } catch { button.disabled = false; button.textContent = "↻ 다시 인식"; showToast("다시 인식하지 못했어요."); }
+  }));
+
+  document.querySelectorAll(".image-position").forEach((input) => input.addEventListener("change", async () => {
+    const index = Number(input.closest(".restaurant-editor").dataset.index);
+    const captureIndex = state.manualRows[index].captureIndex;
+    state.manualRows[index].image = await cropRepresentativeImage(state.captureRows[captureIndex].file, Number(input.value) / 100);
+    renderManual();
+  }));
 
   document.querySelector("#add-row").addEventListener("click", () => {
     state.manualRows.push(blankRestaurant());
@@ -976,9 +1015,9 @@ function restaurant(id, name, location, rating, reviewCount, summary, url, image
 
 function blankCapture() { return { file: null, preview: "", summaryFile: null, summaryPreview: "", url: "" }; }
 
-function showOcrProgress(current, total) {
+function showOcrProgress(current, total, stage = "캡처") {
   const element = document.querySelector("#ocr-progress");
-  if (element) element.textContent = `${current}/${total}번째 캡처를 읽고 있어요`;
+  if (element) element.textContent = `${current}/${total} · ${stage} 읽는 중`;
 }
 
 function fileToDataUrl(file) {
@@ -987,18 +1026,20 @@ function fileToDataUrl(file) {
   });
 }
 
-async function recognizeRestaurant(row, index) {
+async function recognizeRestaurant(row, index, progress = () => {}) {
   if (!window.Tesseract) throw new Error("OCR unavailable");
-  const [mainResult, summaryResult] = await Promise.all([
-    window.Tesseract.recognize(row.file, "kor+eng", { logger: () => {} }),
-    window.Tesseract.recognize(row.summaryFile, "kor+eng", { logger: () => {} }),
-  ]);
+  progress("기본 정보");
+  const mainRegion = await createOcrRegion(row.file, 0.27, 0.62);
+  const mainResult = await window.Tesseract.recognize(mainRegion, "kor+eng", { logger: () => {} });
+  progress(row.summaryFile ? "AI 요약" : "정보 정리");
+  const summaryRegion = row.summaryFile ? await createOcrRegion(row.summaryFile, 0.12, 1) : null;
+  const summaryResult = summaryRegion ? await window.Tesseract.recognize(summaryRegion, "kor+eng", { logger: () => {} }) : { data: { text: "" } };
   const text = normalizeOcrText(mainResult.data.text);
-  const summaryText = normalizeOcrText(summaryResult.data.text);
+  const summaryText = String(summaryResult.data.text || "");
   const ratingMatch = text.match(/([3-5][.,]\d)\s*[\(（]\s*([\d,]{2,})\s*[\)）]/) || text.match(/(?:★|별점)?\s*([3-5][.,]\d)\s*(?:[·ㆍ|]?\s*)?(?:리뷰)?\s*([\d,]{2,})\s*(?:개)?/);
   const location = inferLocation(text);
   const summary = inferScreenshotSummary(summaryText);
-  return restaurant(
+  const item = restaurant(
     `capture-${Date.now()}-${index}`,
     inferScreenshotName(text, location),
     location,
@@ -1008,9 +1049,38 @@ async function recognizeRestaurant(row, index) {
     extractSharedUrl(row.url),
     await cropRepresentativeImage(row.file)
   );
+  item.captureIndex = index;
+  item.ratingText = formatRatingText(item);
+  item.uncertain = [!item.location && "지역", !item.reviewCount && "리뷰", item.summary === "캐치테이블 상세 화면에서 확인한 음식점" && "요약"].filter(Boolean);
+  return item;
+}
+
+function shortShopLink(url) {
+  try { const parsed = new URL(url); return `${parsed.hostname}${parsed.pathname}`; } catch { return url; }
 }
 
 function normalizeOcrText(value) { return String(value || "").replace(/[|]/g, " ").replace(/\s+/g, " ").trim(); }
+
+function createOcrRegion(file, startRatio, endRatio) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const startY = Math.floor(image.naturalHeight * startRatio);
+      const sourceHeight = Math.max(1, Math.floor(image.naturalHeight * (endRatio - startRatio)));
+      const targetWidth = Math.min(1200, Math.max(720, image.naturalWidth * 1.8));
+      const scale = targetWidth / image.naturalWidth;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(targetWidth);
+      canvas.height = Math.round(sourceHeight * scale);
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, startY, image.naturalWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
+      URL.revokeObjectURL(image.src);
+    };
+    image.onerror = reject; image.src = URL.createObjectURL(file);
+  });
+}
 
 function formatRatingText(item) {
   if (!item.rating) return "";
@@ -1026,25 +1096,31 @@ function inferScreenshotName(text, location) {
 }
 
 function inferScreenshotSummary(text) {
-  const known = [
-    /오사카 현지의 맛을 전하는[^。\n•]{3,100}/,
-    /(?:AI|Al)\s*[^.]{0,28}?([가-힣][^•·]{12,100})/,
-    /편안한 분위기에서 즐기는[^。\n]{5,90}/,
-    /흑백요리사[^。\n]{5,90}/,
-  ];
-  for (const pattern of known) { const match = text.match(pattern); if (match) return cleanText(match[0]).slice(0, 150); }
-  const category = ["가이세키오마카세", "다이닝바", "오마카세", "프렌치", "이탈리안", "한식", "일식"].find((item) => text.replace(/\s/g, "").includes(item));
+  const lines = String(text || "").split(/\r?\n/).map(cleanText).filter(Boolean);
+  const headingIndex = lines.findIndex((line) => /요약했어요|요약해.*요|AI.*요약|Al.*요약/i.test(line));
+  const candidates = (headingIndex >= 0 ? lines.slice(headingIndex + 1) : lines).filter((line) => {
+    if (line.length < 8) return false;
+    if (/^(AI|Al|추천|홈|메뉴|사진|리뷰|방송|매장정보|예약|날짜|인원|시간|접기|더보기)/i.test(line)) return false;
+    if (/요약했어요|도움이|유용|좋아요|싫어요/.test(line)) return false;
+    if (/^[•·\-\s]/.test(line)) return false;
+    return /[가-힣]{4,}/.test(line);
+  });
+  if (candidates.length) return candidates[0].replace(/^[^가-힣A-Za-z0-9]+/, "").slice(0, 150);
+  const flatText = normalizeOcrText(text);
+  const known = [/오사카 현지의 맛을 전하는[^。•]{3,100}/, /편안한 분위기에서 즐기는[^。•]{5,90}/, /흑백요리사[^。•]{5,90}/];
+  for (const pattern of known) { const match = flatText.match(pattern); if (match) return cleanText(match[0]).slice(0, 150); }
+  const category = ["가이세키오마카세", "다이닝바", "오마카세", "프렌치", "이탈리안", "한식", "일식"].find((item) => flatText.replace(/\s/g, "").includes(item));
   return category || "캐치테이블 상세 화면에서 확인한 음식점";
 }
 
-function cropRepresentativeImage(file) {
+function cropRepresentativeImage(file, startRatio = 0.05) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
       const canvas = document.createElement("canvas");
       const sourceHeight = Math.max(1, Math.floor(image.naturalHeight * 0.28));
       canvas.width = 640; canvas.height = 360;
-      canvas.getContext("2d").drawImage(image, 0, Math.floor(image.naturalHeight * 0.05), image.naturalWidth, sourceHeight, 0, 0, 640, 360);
+      canvas.getContext("2d").drawImage(image, 0, Math.floor(image.naturalHeight * startRatio), image.naturalWidth, sourceHeight, 0, 0, 640, 360);
       resolve(canvas.toDataURL("image/jpeg", 0.68));
     };
     image.onerror = reject; image.src = URL.createObjectURL(file);
@@ -1194,7 +1270,7 @@ function baseUrl() {
 
 function writeDraft() {
   try {
-    localStorage.setItem("food-worldcup-draft", JSON.stringify({ theme: state.theme, sourceUrl: state.sourceUrl }));
+    localStorage.setItem("food-worldcup-draft", JSON.stringify({ theme: state.theme, sourceUrl: state.sourceUrl, captureUrls: state.captureRows.map((row) => row.url) }));
   } catch {
     // 사생활 보호 모드에서는 저장이 제한될 수 있습니다.
   }

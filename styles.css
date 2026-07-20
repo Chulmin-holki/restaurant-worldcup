@@ -283,12 +283,27 @@ a {
 .capture-drop span { display:grid; gap:5px; text-align:center; }
 .capture-drop small { color:#aaa29a; font-size:11px; font-weight:600; }
 .summary-drop { margin-top:8px; }
+.multi-capture-drop { min-height:132px; }
+.capture-previews { width:100%; display:grid !important; grid-template-columns:1fr 1fr; gap:7px; padding:7px; }
+.capture-previews > span { min-width:0; display:grid; gap:5px; }
+.capture-previews img { width:100%; height:108px; object-fit:cover; object-position:top; border-radius:10px; }
+.capture-previews small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.empty-preview { min-height:108px; place-content:center; border:1px dashed #ded8d2; border-radius:10px; background:white; }
+.empty-preview b { color:var(--accent); font-size:20px; }
 .capture-drop input { display:none; }
 .capture-drop img { width:100%; height:132px; object-fit:cover; object-position:top; }
+.capture-previews img { height:108px; border-radius:10px; }
+.swap-captures { width:100%; margin-top:6px; padding:6px; background:transparent; color:var(--accent); font-size:11px; font-weight:750; cursor:pointer; }
 .capture-url { width:100%; min-height:76px; margin-top:9px; padding:11px 12px; border:1px solid var(--line); border-radius:12px; background:white; outline:none; resize:vertical; line-height:1.45; font:inherit; font-size:13px; }
 .capture-url:focus { border-color:var(--accent); }
+.extracted-link { min-height:18px; margin-top:6px; color:var(--success); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .add-capture { width:100%; margin-top:10px; }
 .editor-image { grid-column:1/-1; width:100%; height:150px; object-fit:cover; border-radius:13px; }
+.uncertain-note { grid-column:1/-1; padding:9px 11px; border-radius:10px; background:#fff6e7; color:var(--warning); font-size:12px; font-weight:750; }
+.editor-tools { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
+.editor-tools .ghost-button { min-width:108px; }
+.editor-tools label { display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11px; font-weight:700; }
+.image-position { width:94px; accent-color:var(--accent); }
 
 .privacy-note {
   margin: 30px 0 0;
