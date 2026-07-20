@@ -31,8 +31,8 @@ const sampleRestaurants = [
 
 initialize();
 
-function initialize() {
-  const shared = readSharedWorldcup();
+async function initialize() {
+  const shared = await readSharedWorldcup();
   if (shared) {
     state.theme = shared.theme;
     state.sourceUrl = shared.sourceUrl;
@@ -814,40 +814,32 @@ function collectRestaurantObjects(root, output, sourceUrl) {
 
 function renderSharedPayload() {
   return {
-    version: 1,
-    theme: state.theme,
-    sourceUrl: state.sourceUrl,
-    restaurants: state.restaurants.map(({ id, name, location, rating, reviewCount, summary, url }) => ({
-      id,
-      name,
-      location,
-      rating,
-      reviewCount,
-      summary,
-      url,
-    })),
+    v: 2,
+    t: state.theme,
+    r: state.restaurants.map(({ name, location, rating, reviewCount, summary, url }) => [name, location, rating || 0, reviewCount || 0, summary || "", url || ""]),
   };
 }
 
-function sharedUrl() {
-  return `${baseUrl()}#worldcup=${encodePayload(renderSharedPayload())}`;
+async function sharedUrl() {
+  return `${baseUrl()}#worldcup=${await encodeSharedPayload(renderSharedPayload())}`;
 }
 
 async function shareCurrentWorldcup() {
-  const url = sharedUrl();
+  const url = await sharedUrl();
   const title = `[${state.theme}] 뭐먹지 월드컵`;
   const text = `${state.restaurants.length}곳 중 오늘의 음식점을 골라주세요.`;
   await shareOrCopy({ title, text, url }, "월드컵 링크를 복사했어요.");
 }
 
 async function shareResult(winner) {
-  const url = sharedUrl();
+  const url = await sharedUrl();
   const title = `${winner.name} 우승!`;
   const text = `[${state.theme}] 뭐먹지 월드컵의 최종 선택은 ${winner.name}입니다.`;
   await shareOrCopy({ title, text, url }, "결과와 다시 하기 링크를 복사했어요.");
 }
 
 async function shareOrCopy(data, copyMessage) {
+  if (data.url.length > 7500) showToast("후보가 많아 공유 링크가 길어요. 후보 수를 줄이면 더 안정적이에요.");
   try {
     if (navigator.share) {
       await navigator.share(data);
@@ -866,11 +858,16 @@ async function shareOrCopy(data, copyMessage) {
   }
 }
 
-function readSharedWorldcup() {
+async function readSharedWorldcup() {
   const match = window.location.hash.match(/^#worldcup=(.+)$/);
   if (!match) return null;
   try {
-    const data = decodePayload(match[1]);
+    const raw = await decodeSharedPayload(match[1]);
+    const data = raw?.v === 2 ? {
+      theme: raw.t,
+      sourceUrl: "",
+      restaurants: raw.r.map((item, index) => ({ id: `shared-${index}-${hashString(String(item[5] || item[0]))}`, name: item[0], location: item[1], rating: item[2], reviewCount: item[3], summary: item[4], url: item[5] })),
+    } : raw;
     if (!data || typeof data.theme !== "string" || !Array.isArray(data.restaurants) || data.restaurants.length < 2) return null;
     return data;
   } catch {
@@ -878,6 +875,38 @@ function readSharedWorldcup() {
     showToast("공유 링크가 손상되어 새 월드컵 화면을 열었어요.");
     return null;
   }
+}
+
+async function encodeSharedPayload(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  if (typeof CompressionStream === "undefined") return `j.${bytesToBase64Url(bytes)}`;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+    const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
+    return `g.${bytesToBase64Url(compressed)}`;
+  } catch { return `j.${bytesToBase64Url(bytes)}`; }
+}
+
+async function decodeSharedPayload(value) {
+  if (!value.startsWith("g.") && !value.startsWith("j.")) return decodePayload(value);
+  const mode = value.slice(0, 1);
+  const bytes = base64UrlToBytes(value.slice(2));
+  if (mode === "j") return JSON.parse(new TextDecoder().decode(bytes));
+  if (typeof DecompressionStream === "undefined") throw new Error("Compressed links are not supported");
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(new TextDecoder().decode(await new Response(stream).arrayBuffer()));
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value) {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const binary = atob(normalized + "=".repeat((4 - (normalized.length % 4)) % 4));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function encodePayload(value) {
@@ -980,9 +1009,10 @@ async function recognizeRestaurant(row, index, progress = () => {}) {
     createOcrRegion(row.file, 0.42, 0.69, false),
   ]);
   const mainResults = await Promise.all(mainRegions.map((region) => window.Tesseract.recognize(region, "kor+eng", { logger: () => {} })));
+  const shopUrl = extractSharedUrl(row.url);
   const mainRawText = mainResults
     .map((result) => ({ text: String(result.data.text || ""), confidence: Number(result.data.confidence || 0) }))
-    .sort((a, b) => (scoreInfoText(b.text) + b.confidence / 12) - (scoreInfoText(a.text) + a.confidence / 12))[0].text;
+    .sort((a, b) => scoreMainOcrResult(b, shopUrl) - scoreMainOcrResult(a, shopUrl))[0].text;
   progress(row.summaryFile ? "AI 요약" : "정보 정리");
   const summaryRegion = row.summaryFile ? await createOcrRegion(row.summaryFile, 0.12, 1) : null;
   const summaryResult = summaryRegion ? await window.Tesseract.recognize(summaryRegion, "kor+eng", { logger: () => {} }) : { data: { text: "" } };
@@ -997,12 +1027,12 @@ async function recognizeRestaurant(row, index, progress = () => {}) {
   const summary = inferScreenshotSummary(summaryText);
   const item = restaurant(
     `capture-${Date.now()}-${index}`,
-    inferScreenshotName(mainRawText, location, extractSharedUrl(row.url)),
+    inferScreenshotName(mainRawText, location, shopUrl),
     location,
     ratingValueMatch ? Number(ratingValueMatch[1].replace(",", ".")) : inferRating(text),
     reviewValue ? Number(reviewValue.replaceAll(",", "")) : inferReviewCount(text),
     summary,
-    extractSharedUrl(row.url),
+    shopUrl,
     await cropRepresentativeImage(row.file)
   );
   item.captureIndex = index;
@@ -1020,6 +1050,27 @@ function normalizeOcrText(value) { return String(value || "").replace(/[|]/g, " 
 function scoreInfoText(value) {
   const text = normalizeOcrText(value);
   return (/[3-5][.,]\d/.test(text) ? 8 : 0) + (/리뷰|[\(（]\d{2,}[\)）]/.test(text) ? 5 : 0) + (inferLocation(text) ? 4 : 0) + ((text.match(/[가-힣]{2,}/g) || []).length);
+}
+
+function scoreMainOcrResult(result, shopUrl) {
+  const candidate = inferScreenshotName(result.text, "", "");
+  return scoreInfoText(result.text) + result.confidence / 12 + shopNameSimilarity(candidate, shopUrl) * 12;
+}
+
+function shopNameSimilarity(name, shopUrl) {
+  const slug = shopSlug(shopUrl).replace(/(?:seoul|restaurant|dining|bar|shop|store)$/g, "");
+  const latinName = String(name || "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]/g, "");
+  if (!slug || !latinName || latinName.length < 3) return 0;
+  if (slug.includes(latinName) || latinName.includes(slug)) return Math.min(slug.length, latinName.length) / Math.max(slug.length, latinName.length);
+  const pairs = (value) => new Set([...Array(Math.max(0, value.length - 1))].map((_, index) => value.slice(index, index + 2)));
+  const a = pairs(slug); const b = pairs(latinName);
+  const overlap = [...a].filter((pair) => b.has(pair)).length;
+  return overlap / Math.max(1, Math.max(a.size, b.size));
+}
+
+function shopSlug(value) {
+  try { return new URL(value).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase().replace(/[^a-z0-9]/g, "") || ""; }
+  catch { return ""; }
 }
 
 function createOcrRegion(file, startRatio, endRatio, enhanceText = false) {
@@ -1108,7 +1159,7 @@ function cleanRestaurantNameLine(value, location) {
 
 function knownShopName(value) {
   try {
-    const key = new URL(value).pathname.split("/").filter(Boolean).at(-1)?.toLowerCase() || "";
+    const key = shopSlug(value);
     if (key.includes("mozu")) return "모즈(MOZU)";
     if (key.includes("mangata")) return "만가타";
     if (key.includes("kushiraku")) return "쿠시라쿠";
