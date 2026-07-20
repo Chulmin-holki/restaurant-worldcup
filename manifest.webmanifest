@@ -1,0 +1,19 @@
+{
+  "name": "뭐먹지 월드컵",
+  "short_name": "뭐먹지",
+  "description": "후보 음식점을 토너먼트로 골라주는 스와이프 월드컵",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f5f2",
+  "theme_color": "#ff4358",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
