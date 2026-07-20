@@ -280,9 +280,12 @@ a {
 .capture-card-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; color:var(--accent); font-size:11px; }
 .remove-capture { width:28px; height:28px; border-radius:50%; background:#eeeae6; cursor:pointer; }
 .capture-drop { min-height:110px; border:1.5px dashed #d9d2cb; border-radius:14px; display:grid; place-items:center; overflow:hidden; color:#827b74; font-size:13px; font-weight:800; cursor:pointer; }
+.capture-drop span { display:grid; gap:5px; text-align:center; }
+.capture-drop small { color:#aaa29a; font-size:11px; font-weight:600; }
+.summary-drop { margin-top:8px; }
 .capture-drop input { display:none; }
 .capture-drop img { width:100%; height:132px; object-fit:cover; object-position:top; }
-.capture-url { width:100%; height:46px; margin-top:9px; padding:0 12px; border:1px solid var(--line); border-radius:12px; background:white; outline:none; }
+.capture-url { width:100%; min-height:76px; margin-top:9px; padding:11px 12px; border:1px solid var(--line); border-radius:12px; background:white; outline:none; resize:vertical; line-height:1.45; font:inherit; font-size:13px; }
 .capture-url:focus { border-color:var(--accent); }
 .add-capture { width:100%; margin-top:10px; }
 .editor-image { grid-column:1/-1; width:100%; height:150px; object-fit:cover; border-radius:13px; }

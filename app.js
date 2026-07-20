@@ -118,10 +118,14 @@ function captureInputTemplate(row, index) {
   return `<article class="capture-input-card" data-index="${index}">
     <div class="capture-card-head"><strong>RESTAURANT ${String(index + 1).padStart(2, "0")}</strong>${state.captureRows.length > 2 ? `<button type="button" class="remove-capture" aria-label="삭제">×</button>` : ""}</div>
     <label class="capture-drop ${row.preview ? "has-image" : ""}">
-      ${row.preview ? `<img src="${escapeAttribute(row.preview)}" alt="${index + 1}번 캡처 미리보기" />` : `<span>＋ 화면 캡처 선택</span>`}
-      <input class="capture-file" type="file" accept="image/*" />
+      ${row.preview ? `<img src="${escapeAttribute(row.preview)}" alt="${index + 1}번 기본 정보 캡처" />` : `<span><b>① 기본 정보 캡처</b><small>이름·지역·별점이 보이는 화면</small></span>`}
+      <input class="capture-file" data-capture="main" type="file" accept="image/*" />
     </label>
-    <input class="capture-url" type="url" inputmode="url" placeholder="이 음식점의 캐치테이블 링크" value="${escapeAttribute(row.url)}" />
+    <label class="capture-drop summary-drop ${row.summaryPreview ? "has-image" : ""}">
+      ${row.summaryPreview ? `<img src="${escapeAttribute(row.summaryPreview)}" alt="${index + 1}번 AI 요약 캡처" />` : `<span><b>② AI 요약 캡처</b><small>아래로 내려 AI 요약이 보이는 화면</small></span>`}
+      <input class="capture-file" data-capture="summary" type="file" accept="image/*" />
+    </label>
+    <textarea class="capture-url" inputmode="url" placeholder="캐치테이블에서 복사한 공유 문구 또는 링크">${escapeHtml(row.url)}</textarea>
   </article>`;
 }
 
@@ -137,8 +141,9 @@ function bindCaptureInputs() {
   document.querySelectorAll(".capture-file").forEach((input) => input.addEventListener("change", async () => {
     const file = input.files?.[0]; if (!file) return;
     const index = Number(input.closest(".capture-input-card").dataset.index);
-    state.captureRows[index].file = file;
-    state.captureRows[index].preview = await fileToDataUrl(file);
+    const isSummary = input.dataset.capture === "summary";
+    state.captureRows[index][isSummary ? "summaryFile" : "file"] = file;
+    state.captureRows[index][isSummary ? "summaryPreview" : "preview"] = await fileToDataUrl(file);
     renderHome();
   }));
 }
@@ -152,9 +157,9 @@ async function handleStartSubmit(event) {
     document.querySelector("#theme-input").focus();
     return;
   }
-  const validRows = state.captureRows.filter((row) => row.file && safeHttpUrl(row.url));
+  const validRows = state.captureRows.filter((row) => row.file && row.summaryFile && extractSharedUrl(row.url));
   if (validRows.length < 2) {
-    showToast("캡처와 링크가 모두 있는 음식점을 두 곳 이상 넣어 주세요.");
+    showToast("기본 캡처·AI 요약 캡처·링크가 모두 있는 음식점을 두 곳 이상 넣어 주세요.");
     return;
   }
 
@@ -236,8 +241,7 @@ function editorTemplate(item, index) {
         ${item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
         <input class="manual-input" data-field="name" placeholder="음식점 이름 *" value="${escapeAttribute(item.name)}" />
         <input class="manual-input" data-field="location" placeholder="위치 *" value="${escapeAttribute(item.location)}" />
-        <input class="manual-input" data-field="rating" inputmode="decimal" placeholder="별점 (예: 4.7)" value="${escapeAttribute(item.rating || "")}" />
-        <input class="manual-input" data-field="reviewCount" inputmode="numeric" placeholder="리뷰 수" value="${escapeAttribute(item.reviewCount || "")}" />
+        <input class="manual-input wide" data-field="ratingText" inputmode="decimal" placeholder="별점(리뷰 수), 예: 4.9(329)" value="${escapeAttribute(item.ratingText || formatRatingText(item))}" />
         <input class="manual-input wide" data-field="summary" placeholder="간단한 요약" value="${escapeAttribute(item.summary)}" />
         <input class="manual-input wide" data-field="url" inputmode="url" placeholder="캐치테이블 링크 *" value="${escapeAttribute(item.url)}" />
       </div>
@@ -970,7 +974,7 @@ function restaurant(id, name, location, rating, reviewCount, summary, url, image
   return { id, name, location, rating, reviewCount, summary, url, image };
 }
 
-function blankCapture() { return { file: null, preview: "", url: "" }; }
+function blankCapture() { return { file: null, preview: "", summaryFile: null, summaryPreview: "", url: "" }; }
 
 function showOcrProgress(current, total) {
   const element = document.querySelector("#ocr-progress");
@@ -985,11 +989,15 @@ function fileToDataUrl(file) {
 
 async function recognizeRestaurant(row, index) {
   if (!window.Tesseract) throw new Error("OCR unavailable");
-  const result = await window.Tesseract.recognize(row.file, "kor+eng", { logger: () => {} });
-  const text = result.data.text.replace(/[|]/g, " ").replace(/\s+/g, " ").trim();
-  const ratingMatch = text.match(/(?:★|별점)?\s*([3-5][.,]\d)\s*(?:[·ㆍ|]?\s*)?(?:리뷰)?\s*([\d,]+)\s*(?:개)?/);
+  const [mainResult, summaryResult] = await Promise.all([
+    window.Tesseract.recognize(row.file, "kor+eng", { logger: () => {} }),
+    window.Tesseract.recognize(row.summaryFile, "kor+eng", { logger: () => {} }),
+  ]);
+  const text = normalizeOcrText(mainResult.data.text);
+  const summaryText = normalizeOcrText(summaryResult.data.text);
+  const ratingMatch = text.match(/([3-5][.,]\d)\s*[\(（]\s*([\d,]{2,})\s*[\)）]/) || text.match(/(?:★|별점)?\s*([3-5][.,]\d)\s*(?:[·ㆍ|]?\s*)?(?:리뷰)?\s*([\d,]{2,})\s*(?:개)?/);
   const location = inferLocation(text);
-  const summary = inferScreenshotSummary(text);
+  const summary = inferScreenshotSummary(summaryText);
   return restaurant(
     `capture-${Date.now()}-${index}`,
     inferScreenshotName(text, location),
@@ -997,9 +1005,16 @@ async function recognizeRestaurant(row, index) {
     ratingMatch ? Number(ratingMatch[1].replace(",", ".")) : inferRating(text),
     ratingMatch ? Number(ratingMatch[2].replaceAll(",", "")) : inferReviewCount(text),
     summary,
-    safeHttpUrl(row.url),
+    extractSharedUrl(row.url),
     await cropRepresentativeImage(row.file)
   );
+}
+
+function normalizeOcrText(value) { return String(value || "").replace(/[|]/g, " ").replace(/\s+/g, " ").trim(); }
+
+function formatRatingText(item) {
+  if (!item.rating) return "";
+  return `${Number(item.rating).toFixed(1)}${item.reviewCount ? `(${Number(item.reviewCount)})` : ""}`;
 }
 
 function inferScreenshotName(text, location) {
@@ -1012,6 +1027,8 @@ function inferScreenshotName(text, location) {
 
 function inferScreenshotSummary(text) {
   const known = [
+    /오사카 현지의 맛을 전하는[^。\n•]{3,100}/,
+    /(?:AI|Al)\s*[^.]{0,28}?([가-힣][^•·]{12,100})/,
     /편안한 분위기에서 즐기는[^。\n]{5,90}/,
     /흑백요리사[^。\n]{5,90}/,
   ];
@@ -1042,12 +1059,13 @@ function normalizeRestaurant(item) {
   if (!item || typeof item !== "object") return null;
   const name = cleanText(item.name);
   if (!name) return null;
+  const ratingTextMatch = String(item.ratingText || "").match(/([0-5](?:[.,]\d)?)\s*(?:[\(（]\s*([\d,]+)\s*[\)）])?/);
   return restaurant(
     cleanText(item.id) || `restaurant-${hashString(`${name}-${item.location || ""}`)}`,
     name.slice(0, 80),
     cleanText(item.location).slice(0, 80),
-    clamp(numberValue(item.rating), 0, 5),
-    Math.max(0, integerValue(item.reviewCount)),
+    clamp(ratingTextMatch ? numberValue(ratingTextMatch[1]) : numberValue(item.rating), 0, 5),
+    Math.max(0, ratingTextMatch?.[2] ? integerValue(ratingTextMatch[2]) : integerValue(item.reviewCount)),
     cleanText(item.summary).slice(0, 240),
     safeHttpUrl(item.url) || state.sourceUrl,
     typeof item.image === "string" ? item.image : ""
