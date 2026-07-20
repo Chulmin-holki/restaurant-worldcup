@@ -1163,6 +1163,8 @@ function knownShopName(value) {
     if (key.includes("mozu")) return "모즈(MOZU)";
     if (key.includes("mangata")) return "만가타";
     if (key.includes("kushiraku")) return "쿠시라쿠";
+    if (key.includes("truffle") && key.includes("alba")) return "Truffle di Alba (트러플 디 알바)";
+    if (key.includes("keego")) return "키고";
     return "";
   } catch { return ""; }
 }
@@ -1190,11 +1192,14 @@ function cropRepresentativeImage(file) {
     const image = new Image();
     image.onload = () => {
       const canvas = document.createElement("canvas");
-      const sourceY = Math.max(0, Math.floor(image.naturalWidth * 0.12));
-      const desiredHeight = Math.floor(image.naturalWidth * 0.52);
+      const sourceX = Math.max(0, Math.floor(image.naturalWidth * 0.02));
+      const sourceY = Math.max(0, Math.floor(image.naturalWidth * 0.125));
+      const desiredWidth = Math.floor(image.naturalWidth * 0.68);
+      const sourceWidth = Math.max(1, Math.min(desiredWidth, image.naturalWidth - sourceX));
+      const desiredHeight = Math.floor(sourceWidth * 0.75);
       const sourceHeight = Math.max(1, Math.min(desiredHeight, image.naturalHeight - sourceY));
-      canvas.width = 640; canvas.height = 360;
-      canvas.getContext("2d").drawImage(image, 0, sourceY, image.naturalWidth, sourceHeight, 0, 0, 640, 360);
+      canvas.width = 640; canvas.height = 480;
+      canvas.getContext("2d").drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, 640, 480);
       resolve(canvas.toDataURL("image/jpeg", 0.68));
     };
     image.onerror = reject; image.src = URL.createObjectURL(file);
