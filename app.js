@@ -4,7 +4,7 @@ const app = document.querySelector("#app");
 const toastElement = document.querySelector("#toast");
 const confettiElement = document.querySelector("#confetti");
 const config = window.APP_CONFIG || {};
-const APP_VERSION = "v22";
+const APP_VERSION = "v24";
 
 const state = {
   view: "home",
@@ -20,6 +20,12 @@ const state = {
   winners: [],
   bye: null,
   priorityRestaurantId: null,
+  winner: null,
+  firstChampion: null,
+  redemptionMode: false,
+  showdownChallenger: null,
+  resultConfirmed: false,
+  marbleContext: null,
 };
 
 const sampleRestaurants = [
@@ -38,7 +44,8 @@ async function initialize() {
     state.theme = shared.theme;
     state.sourceUrl = shared.sourceUrl;
     state.restaurants = shared.restaurants.map(normalizeRestaurant).filter(Boolean);
-    state.view = "review";
+    if (shared.checkpoint && restoreRoundCheckpoint(shared.checkpoint)) state.view = "roundSummary";
+    else state.view = "review";
   } else {
     const draft = readDraft();
     if (draft) {
@@ -62,6 +69,9 @@ function render() {
   if (state.view === "review") renderReview();
   if (state.view === "roundIntro") renderRoundIntro();
   if (state.view === "tournament") renderTournament();
+  if (state.view === "roundSummary") renderRoundSummary();
+  if (state.view === "marble") renderMarbleRace();
+  if (state.view === "finalShowdown") renderFinalShowdown();
   if (state.view === "result") renderResult();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
@@ -266,13 +276,13 @@ function renderManual() {
 }
 
 function editorTemplate(item, index) {
-  const sourcePreview = Number.isInteger(item.captureIndex) ? state.captureRows[item.captureIndex]?.preview : "";
+  const sourcePreview = item.sourcePreview || (Number.isInteger(item.captureIndex) ? state.captureRows[item.captureIndex]?.preview : "");
   return `
     <article class="restaurant-editor" data-index="${index}">
       <div class="editor-number">RESTAURANT ${String(index + 1).padStart(2, "0")}</div>
       ${state.manualRows.length > 2 ? `<button class="remove-editor" type="button" aria-label="${index + 1}번 음식점 삭제">×</button>` : ""}
       <div class="editor-grid">
-        ${sourcePreview ? `<button class="source-preview-button" type="button" data-source-index="${item.captureIndex}">
+        ${sourcePreview ? `<button class="source-preview-button" type="button" data-editor-index="${index}">
           <img class="editor-image source-preview-image" src="${escapeAttribute(sourcePreview)}" alt="${escapeAttribute(item.name || "음식점")} 기본 정보 원본 캡처" />
           <span>첫 캡처 크게 보기 ↗</span>
         </button>` : item.image ? `<img class="editor-image" src="${escapeAttribute(item.image)}" alt="${escapeAttribute(item.name || "음식점")} 대표 이미지" />` : ""}
@@ -304,8 +314,10 @@ function bindManualEditors() {
   });
 
   document.querySelectorAll(".source-preview-button").forEach((button) => button.addEventListener("click", () => {
-    const row = state.captureRows[Number(button.dataset.sourceIndex)];
-    if (row?.preview) openSourcePreview(row.preview);
+    const item = state.manualRows[Number(button.dataset.editorIndex)];
+    const row = Number.isInteger(item?.captureIndex) ? state.captureRows[item.captureIndex] : null;
+    const source = item?.sourcePreview || row?.preview;
+    if (source) openSourcePreview(source);
   }));
 
   document.querySelector("#add-row").addEventListener("click", () => {
@@ -511,10 +523,29 @@ function renderTournament() {
         ${choiceCard(bottom, "bottom", state.matchIndex * 2 + 2)}
       </div>
       <div class="swipe-hints" aria-hidden="true"><span>← 위 음식점</span><span>아래 음식점 →</span></div>
+      <div class="match-extra-actions">
+        <button id="round-summary-button" type="button">라운드 요약·공유</button>
+        <button id="marble-help-button" type="button">아 정말 모르겠어요 🎱</button>
+      </div>
       ${state.bye && state.matchIndex === 0 ? `<div class="bye-banner">${escapeHtml(state.bye.name)}은(는) 부전승! 다음 라운드 첫 매치로 갑니다.</div>` : ""}
     </section>`, "tournament-shell");
 
   bindMatchGestures(top, bottom);
+  document.querySelector("#round-summary-button").addEventListener("click", () => { state.view = "roundSummary"; render(); });
+  document.querySelector("#marble-help-button").addEventListener("click", () => openMarbleRace({ type: "match", competitors: [top, bottom] }));
+}
+
+function renderRoundSummary() {
+  const remainingMatches = state.matches.slice(state.matchIndex);
+  app.innerHTML = shell(`<section class="screen round-summary-screen">
+    ${topbar(`${roundLabel(state.roundEntrants.length)} · PAUSE`)}
+    <div class="review-heading"><p class="eyebrow">ROUND CHECKPOINT</p><h1>여기까지 진행했어요.</h1><p>이 링크를 받은 사람은 현재 라운드의 다음 선택부터 이어서 진행해요.</p></div>
+    <div class="round-summary-stats"><span><b>${state.winners.length}</b> 선택 완료</span><span><b>${remainingMatches.length}</b> 매치 남음</span></div>
+    <div class="restaurant-list">${state.roundEntrants.map((item) => `<article class="restaurant-row"><div class="restaurant-index">${state.winners.some((winner) => winner.id === item.id) ? "✓" : "·"}</div><div><h2>${escapeHtml(item.name)}</h2><p>${escapeHtml(item.location || "위치 정보 없음")}</p></div></article>`).join("")}</div>
+    <div class="round-summary-actions"><button id="resume-round" class="secondary-button" type="button">내가 계속 진행</button><button id="share-round" class="primary-button" type="button">현재 라운드 공유 ↗</button></div>
+  </section>`);
+  document.querySelector("#resume-round").addEventListener("click", () => { state.view = "tournament"; render(); });
+  document.querySelector("#share-round").addEventListener("click", shareRoundCheckpoint);
 }
 
 function choiceCard(item, position, number) {
@@ -619,6 +650,84 @@ function bindMatchGestures(top, bottom) {
   });
 }
 
+function openMarbleRace(context) {
+  state.marbleContext = context;
+  state.view = "marble";
+  render();
+}
+
+function renderMarbleRace() {
+  const [first, second] = state.marbleContext.competitors;
+  app.innerHTML = shell(`<section class="screen marble-screen">
+    ${topbar("MARBLE RACING")}
+    <div class="marble-heading"><p class="eyebrow">운명에 맡기는 마지막 방법</p><h1>아 정말<br />모르겠어요!</h1><p>각 음식점의 구슬 색을 정한 뒤 레이스를 시작하세요. 장애물과 뜻밖의 역전이 기다리고 있어요.</p></div>
+    <div class="marble-color-pickers">
+      <label><span>${escapeHtml(first.name)}</span><input id="marble-color-0" type="color" value="#ff4358" /></label>
+      <label><span>${escapeHtml(second.name)}</span><input id="marble-color-1" type="color" value="#4f7cff" /></label>
+    </div>
+    <div id="marble-track" class="marble-track">
+      ${marbleLane(first, 0)}${marbleLane(second, 1)}
+      <i class="race-obstacle obstacle-one">◆</i><i class="race-obstacle obstacle-two">✦</i><i class="race-obstacle obstacle-three">▲</i>
+      <div class="finish-line">FINISH</div>
+    </div>
+    <div id="marble-commentary" class="marble-commentary">색을 정하고 출발을 눌러주세요.</div>
+    <div class="marble-actions"><button id="marble-back" class="secondary-button" type="button">돌아가기</button><button id="marble-start" class="primary-button" type="button">레이스 시작!</button></div>
+  </section>`);
+  document.querySelector("#marble-back").addEventListener("click", () => { state.view = state.marbleContext.type === "showdown" ? "finalShowdown" : "tournament"; render(); });
+  document.querySelector("#marble-start").addEventListener("click", runMarbleRace);
+}
+
+function marbleLane(item, index) {
+  return `<div class="marble-lane lane-${index}"><span class="lane-name">${escapeHtml(item.name)}</span><i class="marble-ball" data-marble="${index}"></i></div>`;
+}
+
+function runMarbleRace() {
+  const startButton = document.querySelector("#marble-start");
+  const backButton = document.querySelector("#marble-back");
+  startButton.disabled = true; backButton.disabled = true;
+  const colors = [document.querySelector("#marble-color-0").value, document.querySelector("#marble-color-1").value];
+  const balls = [...document.querySelectorAll(".marble-ball")];
+  balls.forEach((ball, index) => { ball.style.background = colors[index]; boxShadowMarble(ball, colors[index]); });
+  const chosenWinner = Math.random() < 0.5 ? 0 : 1;
+  const durations = chosenWinner === 0 ? [5200, 5550] : [5550, 5200];
+  const startedAt = performance.now();
+  const commentary = document.querySelector("#marble-commentary");
+  const messages = ["출발! 구슬들이 첫 장애물로 향합니다.", "충돌! 선두가 잠시 흔들립니다.", "중반 대역전! 아직 아무도 몰라요.", "마지막 장애물 통과! 결승선이 보입니다."];
+  let lastMessage = -1;
+
+  function frame(now) {
+    const elapsed = now - startedAt;
+    balls.forEach((ball, index) => {
+      const base = Math.min(1, elapsed / durations[index]);
+      const bumps = Math.sin(base * 31 + index * 2.7) * 2.2 + Math.sin(base * 13 + index) * 1.5;
+      const obstacleSlow = (base > .3 && base < .38) || (base > .61 && base < .69) ? -3.8 : 0;
+      ball.style.left = `calc(${Math.min(91, base * 91)}% + ${bumps + obstacleSlow}px)`;
+      ball.style.transform = `translate(-50%,-50%) rotate(${base * 1440}deg) scale(${base > .82 ? 1.12 : 1})`;
+    });
+    const messageIndex = Math.min(messages.length - 1, Math.floor(elapsed / 1250));
+    if (messageIndex !== lastMessage) { commentary.textContent = messages[messageIndex]; lastMessage = messageIndex; }
+    if (elapsed < Math.max(...durations)) requestAnimationFrame(frame);
+    else {
+      const winner = state.marbleContext.competitors[chosenWinner];
+      commentary.innerHTML = `<strong>${escapeHtml(winner.name)}</strong> 구슬이 먼저 도착했어요!`;
+      window.setTimeout(() => completeMarbleChoice(winner), 1200);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+function boxShadowMarble(ball, color) { ball.style.boxShadow = `0 0 0 4px rgba(255,255,255,.9), 0 7px 18px ${color}88`; }
+
+function completeMarbleChoice(winner) {
+  const type = state.marbleContext.type;
+  state.marbleContext = null;
+  if (type === "showdown") { finishFinalShowdown(winner); return; }
+  state.winners.push(winner);
+  state.matchIndex += 1;
+  if (state.matchIndex >= state.matches.length) advanceRound();
+  else { state.view = "tournament"; render(); }
+}
+
 let choiceLocked = false;
 function chooseRestaurant(winner, direction) {
   if (choiceLocked) return;
@@ -642,8 +751,14 @@ function chooseRestaurant(winner, direction) {
 function advanceRound() {
   const nextEntrants = state.bye ? [state.bye, ...state.winners] : [...state.winners];
   if (nextEntrants.length === 1) {
-    state.restaurants = state.restaurants;
+    if (state.redemptionMode && state.firstChampion) {
+      state.showdownChallenger = nextEntrants[0];
+      state.view = "finalShowdown";
+      render();
+      return;
+    }
     state.winner = nextEntrants[0];
+    state.resultConfirmed = false;
     state.view = "result";
     render();
     launchConfetti();
@@ -680,6 +795,8 @@ function renderResult() {
         <a class="primary-button" href="${escapeAttribute(winner.url || state.sourceUrl)}" target="_blank" rel="noopener noreferrer">캐치테이블에서 확인하기 ↗</a>
       </article>
 
+      ${!state.resultConfirmed ? `<div class="satisfaction-card"><h2>100% 만족하십니까?</h2><p>아니오를 선택하면 이 음식점은 잠시 제외하고 나머지 후보로 다시 결정해요.</p><div><button id="satisfied-yes" class="primary-button" type="button">예 · 최종 선택</button><button id="satisfied-no" class="secondary-button" type="button">아니오 · 제외하고 다시 시작</button></div></div>` : `<div class="final-confirmed-badge">최종 선택이 확정됐어요 ✓</div>`}
+
       <div class="result-actions">
         <button id="replay-button" class="secondary-button" type="button">같은 후보로 다시 하기</button>
         <button id="share-result" class="ghost-button" type="button">결과 공유하기 ↗</button>
@@ -691,12 +808,51 @@ function renderResult() {
       </div>
     </section>`);
 
-  document.querySelector("#replay-button").addEventListener("click", startTournament);
+  document.querySelector("#replay-button").addEventListener("click", () => { state.firstChampion = null; state.redemptionMode = false; state.showdownChallenger = null; startTournament(); });
   document.querySelector("#share-result").addEventListener("click", () => shareResult(winner));
   document.querySelector("#new-worldcup").addEventListener("click", (event) => {
     event.preventDefault();
     resetToHome();
   });
+  document.querySelector("#satisfied-yes")?.addEventListener("click", () => { state.resultConfirmed = true; renderResult(); launchConfetti(); });
+  document.querySelector("#satisfied-no")?.addEventListener("click", startRedemptionTournament);
+}
+
+function startRedemptionTournament() {
+  state.firstChampion = state.winner;
+  state.redemptionMode = true;
+  const remaining = state.restaurants.filter((item) => item.id !== state.firstChampion.id);
+  if (remaining.length === 1) {
+    state.showdownChallenger = remaining[0]; state.view = "finalShowdown"; render(); return;
+  }
+  state.roundNumber = 0;
+  state.priorityRestaurantId = null;
+  prepareRound(remaining);
+}
+
+function renderFinalShowdown() {
+  const first = state.firstChampion;
+  const challenger = state.showdownChallenger;
+  app.innerHTML = shell(`<section class="screen final-showdown-screen">
+    ${topbar("ULTIMATE FINAL")}
+    <div class="review-heading"><p class="eyebrow">최최종 결승전</p><h1>처음의 선택 vs<br />다시 찾은 선택</h1><p>직접 고르거나 마지막 운명은 구슬에게 맡겨보세요.</p></div>
+    <div class="showdown-grid">${showdownCard(first, "첫 우승자", "first")}${showdownCard(challenger, "재도전 우승자", "challenger")}</div>
+    <button id="showdown-marble" class="marble-main-button" type="button">아 정말 모르겠어요 · 마블 레이싱 🎱</button>
+  </section>`);
+  document.querySelectorAll("[data-showdown]").forEach((button) => button.addEventListener("click", () => finishFinalShowdown(button.dataset.showdown === "first" ? first : challenger)));
+  document.querySelector("#showdown-marble").addEventListener("click", () => openMarbleRace({ type: "showdown", competitors: [first, challenger] }));
+}
+
+function showdownCard(item, label, key) {
+  return `<article class="showdown-card">${item.image ? `<div class="showdown-photo" style="background-image:url('${escapeAttribute(item.image)}')"></div>` : ""}<small>${escapeHtml(label)}</small><h2>${escapeHtml(item.name)}</h2><p>${escapeHtml(item.location || "위치 정보 없음")}</p><button data-showdown="${key}" type="button">이곳 최종 선택</button></article>`;
+}
+
+function finishFinalShowdown(winner) {
+  state.winner = winner;
+  state.resultConfirmed = true;
+  state.redemptionMode = false;
+  state.view = "result";
+  render(); launchConfetti();
 }
 
 async function importRestaurants(sourceUrl) {
@@ -838,12 +994,14 @@ function collectRestaurantObjects(root, output, sourceUrl) {
   visit(root, 0);
 }
 
-function renderSharedPayload() {
-  return {
+function renderSharedPayload(includeCheckpoint = false) {
+  const payload = {
     v: 3,
     t: state.theme,
     r: state.restaurants.map(({ name, location, rating, reviewCount, summary, url }) => [name, location, rating || 0, reviewCount || 0, (summary || "").slice(0, 100), compactRestaurantUrl(url)]),
   };
+  if (includeCheckpoint) payload.c = createRoundCheckpoint();
+  return payload;
 }
 
 function compactRestaurantUrl(value) {
@@ -859,8 +1017,36 @@ function expandRestaurantUrl(value) {
   return String(value || "").startsWith("@") ? `https://app.catchtable.co.kr/ct/shop/${String(value).slice(1)}` : value;
 }
 
-async function sharedUrl() {
-  return `${baseUrl()}#worldcup=${await encodeSharedPayload(renderSharedPayload())}`;
+async function sharedUrl(includeCheckpoint = false) {
+  return `${baseUrl()}#worldcup=${await encodeSharedPayload(renderSharedPayload(includeCheckpoint))}`;
+}
+
+function restaurantShareIndex(item) {
+  return state.restaurants.findIndex((candidate) => candidate.id === item?.id || (candidate.url && candidate.url === item?.url) || candidate.name === item?.name);
+}
+
+function createRoundCheckpoint() {
+  const index = (item) => item ? restaurantShareIndex(item) : -1;
+  return { n: state.roundNumber, e: state.roundEntrants.map(index), m: state.matches.map((match) => match.map(index)), i: state.matchIndex, w: state.winners.map(index), b: index(state.bye), p: state.priorityRestaurantId ? restaurantShareIndex(state.restaurants.find((item) => item.id === state.priorityRestaurantId)) : -1, d: state.redemptionMode ? 1 : 0, f: index(state.firstChampion) };
+}
+
+function restoreRoundCheckpoint(checkpoint) {
+  try {
+    const get = (index) => Number.isInteger(index) && index >= 0 ? state.restaurants[index] : null;
+    const entrants = checkpoint.e.map(get).filter(Boolean);
+    const matches = checkpoint.m.map((pair) => pair.map(get)).filter((pair) => pair.length === 2 && pair.every(Boolean));
+    if (entrants.length < 2 || !matches.length) return false;
+    state.roundNumber = Number(checkpoint.n) || 1;
+    state.roundEntrants = entrants;
+    state.matches = matches;
+    state.matchIndex = Math.min(Math.max(0, Number(checkpoint.i) || 0), matches.length - 1);
+    state.winners = (checkpoint.w || []).map(get).filter(Boolean);
+    state.bye = get(checkpoint.b);
+    state.priorityRestaurantId = get(checkpoint.p)?.id || null;
+    state.redemptionMode = Boolean(checkpoint.d);
+    state.firstChampion = get(checkpoint.f);
+    return true;
+  } catch { return false; }
 }
 
 async function shareCurrentWorldcup() {
@@ -873,6 +1059,11 @@ async function shareResult(winner) {
   const url = await sharedUrl();
   const title = `${winner.name} 우승!`;
   await shareOrCopy({ title, url }, "결과와 다시 하기 링크를 복사했어요.");
+}
+
+async function shareRoundCheckpoint() {
+  const url = await sharedUrl(true);
+  await shareOrCopy({ title: `[${state.theme}] ${roundLabel(state.roundEntrants.length)} 이어하기`, url }, "현재 라운드 링크를 복사했어요.");
 }
 
 async function shareOrCopy(data, copyMessage) {
@@ -904,6 +1095,7 @@ async function readSharedWorldcup() {
       theme: raw.t,
       sourceUrl: "",
       restaurants: raw.r.map((item, index) => ({ id: `shared-${index}-${hashString(String(item[5] || item[0]))}`, name: item[0], location: item[1], rating: item[2], reviewCount: item[3], summary: item[4], url: raw.v === 3 ? expandRestaurantUrl(item[5]) : item[5] })),
+      checkpoint: raw.c || null,
     } : raw;
     if (!data || typeof data.theme !== "string" || !Array.isArray(data.restaurants) || data.restaurants.length < 2) return null;
     return data;
@@ -969,6 +1161,11 @@ function resetToHome() {
   state.winner = null;
   state.roundNumber = 0;
   state.priorityRestaurantId = null;
+  state.firstChampion = null;
+  state.redemptionMode = false;
+  state.showdownChallenger = null;
+  state.resultConfirmed = false;
+  state.marbleContext = null;
   localStorage.removeItem("food-worldcup-draft");
   history.replaceState(null, "", baseUrl());
   render();
@@ -1073,6 +1270,7 @@ async function recognizeRestaurant(row, index, progress = () => {}) {
     await cropRepresentativeImage(row.file)
   );
   item.captureIndex = index;
+  item.sourcePreview = row.preview || await fileToDataUrl(row.file);
   item.ratingText = formatRatingText(item);
   item.uncertain = [!item.location && "지역", !item.reviewCount && "리뷰", item.summary === "캐치테이블 상세 화면에서 확인한 음식점" && "요약"].filter(Boolean);
   return item;

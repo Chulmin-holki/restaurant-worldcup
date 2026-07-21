@@ -63,19 +63,19 @@ a {
 }
 
 .app-version {
-  position: fixed;
+  position: absolute;
   z-index: 120;
-  left: max(8px, calc((100vw - 520px) / 2 + 8px));
-  bottom: max(5px, env(safe-area-inset-bottom));
-  padding: 3px 6px;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 6px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.88);
   color: #aaa39c;
   font-size: 9px;
   font-weight: 750;
   line-height: 1;
   pointer-events: none;
-  backdrop-filter: blur(5px);
 }
 
 .screen {
@@ -847,6 +847,51 @@ a {
   box-shadow: 0 14px 40px rgba(0,0,0,0.22);
   animation: banner-in 260ms ease both, banner-out 260ms ease 2.5s forwards;
 }
+
+.match-extra-actions { display:grid; grid-template-columns:1fr 1.2fr; gap:8px; margin-top:4px; }
+.match-extra-actions button { min-height:36px; border-radius:11px; background:#f2efec; color:#5e5954; cursor:pointer; font-size:11px; font-weight:800; }
+.match-extra-actions button:last-child { background:#211e2d; color:white; }
+
+.round-summary-screen { padding-bottom:calc(104px + var(--safe-bottom)); }
+.round-summary-stats { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:18px; }
+.round-summary-stats span { padding:15px; border-radius:16px; background:#f7f4f1; color:var(--muted); text-align:center; font-size:12px; }
+.round-summary-stats b { display:block; margin-bottom:3px; color:var(--ink); font-size:24px; }
+.round-summary-actions { position:fixed; z-index:50; left:50%; bottom:0; width:min(100%,520px); transform:translateX(-50%); display:grid; grid-template-columns:.9fr 1.3fr; gap:8px; padding:12px 22px var(--safe-bottom); background:linear-gradient(180deg,rgba(255,255,255,0),white 18%); }
+.round-summary-actions .primary-button { margin:0; }
+
+.marble-screen { min-height:100dvh; background:radial-gradient(circle at 20% 15%,rgba(255,67,88,.15),transparent 30%),linear-gradient(180deg,#fff,#f5f2ff); }
+.marble-heading { padding:28px 0 18px; }
+.marble-heading h1 { margin:0; font-size:40px; line-height:1.02; letter-spacing:-.055em; }
+.marble-heading > p:last-child { margin:12px 0 0; color:var(--muted); font-size:13px; line-height:1.55; }
+.marble-color-pickers { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:14px; }
+.marble-color-pickers label { min-width:0; padding:10px 11px; border:1px solid var(--line); border-radius:14px; background:white; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.marble-color-pickers span { overflow:hidden; font-size:11px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
+.marble-color-pickers input { width:34px; height:30px; flex:0 0 auto; border:0; padding:0; background:transparent; }
+.marble-track { position:relative; height:230px; border:1px solid #ddd7ed; border-radius:22px; overflow:hidden; background:repeating-linear-gradient(90deg,rgba(112,93,160,.07) 0,rgba(112,93,160,.07) 1px,transparent 1px,transparent 38px),linear-gradient(180deg,#29243a,#191624); box-shadow:inset 0 0 40px rgba(0,0,0,.35),0 18px 40px rgba(45,35,75,.15); }
+.marble-lane { position:absolute; left:0; right:0; height:50%; border-bottom:1px dashed rgba(255,255,255,.17); }
+.lane-0 { top:0; }.lane-1 { top:50%; border-bottom:0; }
+.lane-name { position:absolute; z-index:3; top:8px; left:10px; max-width:52%; padding:4px 7px; border-radius:7px; background:rgba(0,0,0,.34); color:white; overflow:hidden; font-size:10px; font-weight:800; text-overflow:ellipsis; white-space:nowrap; }
+.marble-ball { position:absolute; z-index:8; left:7%; top:58%; width:27px; height:27px; border-radius:50%; background:#ff4358; transition:filter .2s; }
+.lane-1 .marble-ball { background:#4f7cff; }
+.race-obstacle { position:absolute; z-index:4; color:#ffcf4b; font-style:normal; text-shadow:0 2px 6px rgba(0,0,0,.4); }
+.obstacle-one { left:31%; top:39%; font-size:29px; transform:rotate(18deg); }.obstacle-two { left:61%; top:15%; font-size:23px; }.obstacle-three { left:65%; top:70%; font-size:26px; transform:rotate(12deg); }
+.finish-line { position:absolute; z-index:2; top:0; bottom:0; right:7%; width:12px; padding-top:6px; background:repeating-linear-gradient(0deg,#fff 0,#fff 6px,#111 6px,#111 12px); color:white; font-size:7px; font-weight:900; writing-mode:vertical-rl; }
+.marble-commentary { min-height:46px; margin-top:10px; padding:12px 14px; border-radius:13px; background:white; color:#5f596b; text-align:center; font-size:12px; box-shadow:0 8px 24px rgba(45,35,75,.08); }
+.marble-commentary strong { color:var(--accent); }
+.marble-actions { display:grid; grid-template-columns:.8fr 1.4fr; gap:8px; margin-top:10px; }
+.marble-actions .primary-button { margin:0; }
+
+.satisfaction-card { margin-top:18px; padding:19px; border:1px solid #ffd1d7; border-radius:20px; background:#fff7f8; text-align:center; }
+.satisfaction-card h2 { margin:0; font-size:20px; }.satisfaction-card p { margin:8px 0 14px; color:var(--muted); font-size:12px; line-height:1.55; }
+.satisfaction-card > div { display:grid; gap:8px; }.satisfaction-card .primary-button { margin:0; }
+.final-confirmed-badge { margin-top:18px; padding:14px; border-radius:15px; background:#eaf8f3; color:var(--success); text-align:center; font-size:13px; font-weight:850; }
+.final-showdown-screen { background:radial-gradient(circle at 50% 34%,rgba(255,67,88,.16),transparent 34%),white; }
+.showdown-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.showdown-card { min-width:0; overflow:hidden; border:1px solid var(--line); border-radius:20px; background:white; box-shadow:var(--shadow); }
+.showdown-photo { height:130px; background-size:cover; background-position:center; }
+.showdown-card small,.showdown-card h2,.showdown-card p { display:block; margin-left:14px; margin-right:14px; }.showdown-card small { margin-top:13px; color:var(--accent); font-weight:850; }.showdown-card h2 { margin-top:5px; margin-bottom:0; overflow:hidden; font-size:18px; text-overflow:ellipsis; white-space:nowrap; }.showdown-card p { margin-top:5px; color:var(--muted); font-size:12px; }
+.showdown-card button { width:calc(100% - 20px); min-height:40px; margin:7px 10px 10px; border-radius:12px; background:var(--accent-soft); color:var(--accent); cursor:pointer; font-size:11px; font-weight:850; }
+.marble-main-button { width:100%; min-height:54px; margin-top:14px; border-radius:16px; background:#211e2d; color:white; cursor:pointer; font-weight:850; }
 
 @keyframes banner-in { from { opacity: 0; transform: translate(-50%, -12px); } }
 @keyframes banner-out { to { opacity: 0; transform: translate(-50%, -12px); } }
