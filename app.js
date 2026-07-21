@@ -4,7 +4,7 @@ const app = document.querySelector("#app");
 const toastElement = document.querySelector("#toast");
 const confettiElement = document.querySelector("#confetti");
 const config = window.APP_CONFIG || {};
-const APP_VERSION = "v24";
+const APP_VERSION = "v25";
 
 const state = {
   view: "home",
@@ -666,9 +666,17 @@ function renderMarbleRace() {
       <label><span>${escapeHtml(second.name)}</span><input id="marble-color-1" type="color" value="#4f7cff" /></label>
     </div>
     <div id="marble-track" class="marble-track">
+      <div class="arena-glow glow-one"></div><div class="arena-glow glow-two"></div>
+      <div class="start-gate"><span>START</span></div>
+      <div class="course-rail rail-top"></div><div class="course-rail rail-middle"></div><div class="course-rail rail-bottom"></div>
       ${marbleLane(first, 0)}${marbleLane(second, 1)}
-      <i class="race-obstacle obstacle-one">◆</i><i class="race-obstacle obstacle-two">✦</i><i class="race-obstacle obstacle-three">▲</i>
-      <div class="finish-line">FINISH</div>
+      <div class="race-tunnel"><span>TUNNEL</span></div>
+      <i class="race-obstacle spinner-obstacle obstacle-one"><b></b></i>
+      <i class="race-obstacle bumper-obstacle obstacle-two"></i>
+      <i class="race-obstacle spinner-obstacle obstacle-three"><b></b></i>
+      <div class="jump-pad">BOOST</div>
+      <div class="finish-line"><span>FINISH</span></div>
+      <div id="marble-particles" class="marble-particles"></div>
     </div>
     <div id="marble-commentary" class="marble-commentary">색을 정하고 출발을 눌러주세요.</div>
     <div class="marble-actions"><button id="marble-back" class="secondary-button" type="button">돌아가기</button><button id="marble-start" class="primary-button" type="button">레이스 시작!</button></div>
@@ -678,7 +686,7 @@ function renderMarbleRace() {
 }
 
 function marbleLane(item, index) {
-  return `<div class="marble-lane lane-${index}"><span class="lane-name">${escapeHtml(item.name)}</span><i class="marble-ball" data-marble="${index}"></i></div>`;
+  return `<div class="marble-lane lane-${index}"><span class="lane-rank" data-rank="${index}">${index + 1}</span><span class="lane-name">${escapeHtml(item.name)}</span><i class="marble-ball" data-marble="${index}"><b></b></i></div>`;
 }
 
 function runMarbleRace() {
@@ -687,6 +695,8 @@ function runMarbleRace() {
   startButton.disabled = true; backButton.disabled = true;
   const colors = [document.querySelector("#marble-color-0").value, document.querySelector("#marble-color-1").value];
   const balls = [...document.querySelectorAll(".marble-ball")];
+  const track = document.querySelector("#marble-track");
+  track.classList.add("is-racing");
   balls.forEach((ball, index) => { ball.style.background = colors[index]; boxShadowMarble(ball, colors[index]); });
   const chosenWinner = Math.random() < 0.5 ? 0 : 1;
   const durations = chosenWinner === 0 ? [5200, 5550] : [5550, 5200];
@@ -701,19 +711,41 @@ function runMarbleRace() {
       const base = Math.min(1, elapsed / durations[index]);
       const bumps = Math.sin(base * 31 + index * 2.7) * 2.2 + Math.sin(base * 13 + index) * 1.5;
       const obstacleSlow = (base > .3 && base < .38) || (base > .61 && base < .69) ? -3.8 : 0;
-      ball.style.left = `calc(${Math.min(91, base * 91)}% + ${bumps + obstacleSlow}px)`;
-      ball.style.transform = `translate(-50%,-50%) rotate(${base * 1440}deg) scale(${base > .82 ? 1.12 : 1})`;
+      const verticalWave = Math.sin(base * 19 + index * 2.2) * 9 + (base > .46 && base < .54 ? -13 : 0);
+      ball.style.left = `calc(${Math.min(91, 5 + base * 86)}% + ${bumps + obstacleSlow}px)`;
+      ball.style.top = `calc(58% + ${verticalWave}px)`;
+      ball.style.transform = `translate(-50%,-50%) rotate(${base * 1800}deg) scale(${base > .82 ? 1.14 : 1})`;
     });
+    const progress = durations.map((duration) => Math.min(1, elapsed / duration));
+    document.querySelector('[data-rank="0"]').textContent = progress[0] >= progress[1] ? "1" : "2";
+    document.querySelector('[data-rank="1"]').textContent = progress[1] > progress[0] ? "1" : "2";
     const messageIndex = Math.min(messages.length - 1, Math.floor(elapsed / 1250));
     if (messageIndex !== lastMessage) { commentary.textContent = messages[messageIndex]; lastMessage = messageIndex; }
     if (elapsed < Math.max(...durations)) requestAnimationFrame(frame);
     else {
       const winner = state.marbleContext.competitors[chosenWinner];
+      track.classList.remove("is-racing");
+      track.classList.add("race-finished");
+      launchMarbleParticles(colors[chosenWinner]);
       commentary.innerHTML = `<strong>${escapeHtml(winner.name)}</strong> 구슬이 먼저 도착했어요!`;
       window.setTimeout(() => completeMarbleChoice(winner), 1200);
     }
   }
   requestAnimationFrame(frame);
+}
+
+function launchMarbleParticles(color) {
+  const layer = document.querySelector("#marble-particles");
+  if (!layer) return;
+  layer.replaceChildren();
+  for (let index = 0; index < 34; index += 1) {
+    const particle = document.createElement("i");
+    particle.style.background = index % 3 === 0 ? "#ffd760" : color;
+    particle.style.setProperty("--particle-x", `${-100 + Math.random() * 200}px`);
+    particle.style.setProperty("--particle-y", `${-80 + Math.random() * 160}px`);
+    particle.style.animationDelay = `${Math.random() * .18}s`;
+    layer.append(particle);
+  }
 }
 
 function boxShadowMarble(ball, color) { ball.style.boxShadow = `0 0 0 4px rgba(255,255,255,.9), 0 7px 18px ${color}88`; }
